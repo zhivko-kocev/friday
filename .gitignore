@@ -1,0 +1,25 @@
+# Build artifacts
+/friday
+/friday.exe
+/dist/
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.vscode/
+.idea/
+
+# Secrets — never commit
+.env
+.env.*
+*.key
+*.pem
+*.secret
+*.keystore
