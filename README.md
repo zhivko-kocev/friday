@@ -4,14 +4,34 @@ Manage AI-agent config (Claude Code, Cursor, OpenCode, Copilot) from one canonic
 
 ## Install
 
-```bash
-# from source
-go install github.com/zhivko-kocev/friday/cmd/friday@latest
+**Linux / macOS** — one-liner installs the latest release into `/usr/local/bin`:
 
-# or build locally
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhivko-kocev/friday/master/install.sh | bash
+```
+
+Override the install dir with `FRIDAY_INSTALL_DIR=$HOME/bin`.
+
+**Windows** (PowerShell) — installs into `%LOCALAPPDATA%\Programs\friday\`:
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/zhivko-kocev/friday/master/install.ps1 | iex
+```
+
+Override with `$env:FRIDAY_INSTALL_DIR` before piping. The script prints the exact `[Environment]::SetEnvironmentVariable` command if the dir isn't on your user PATH.
+
+**With the Go toolchain** — anywhere Go is installed:
+
+```bash
+go install github.com/zhivko-kocev/friday/cmd/friday@latest
+```
+
+**From source**:
+
+```bash
 git clone https://github.com/zhivko-kocev/friday
 cd friday
-make build      # writes ./friday (Unix) or ./friday.exe (Windows)
+make build      # produces ./friday (Unix) or ./friday.exe (Windows)
 ```
 
 Pre-built binaries: see the [releases page](https://github.com/zhivko-kocev/friday/releases).

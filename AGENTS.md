@@ -9,7 +9,7 @@ agent dirs, discard the clone.
 ## Build & test
 
 ```bash
-make build          # produces ./friday binary
+make build          # produces ./friday (Unix) or ./friday.exe (Windows)
 make test           # go test ./...
 make lint           # go vet ./...
 make tidy           # go mod tidy
@@ -38,10 +38,11 @@ rules/*.md            behaviour rules
 agents/*.md           agent definitions (claude only)
 commands/*.md         slash-commands (claude only)
 skills/<name>/*       skills (recursively mirrored)
-memory/*.md           context / memory
-tasks/*.md            task definitions
 friday.yaml           OPTIONAL — overrides preset behaviour
 ```
+
+No preset currently reads `memory/` or `tasks/`. The scaffold doesn't create
+them; if you ship them in a config repo they'll just sit there unused.
 
 Empty subdirs are fine — globs that match nothing are reported as
 `missing-source` and skipped. Dotfiles (`.gitkeep`, `.hidden.md`) are
@@ -50,18 +51,20 @@ filtered from `*` and `**` matches by convention.
 ## Package map
 
 ```
-cmd/friday/         entry point — wires os.Args into cli.Run, sets version via ldflags
-internal/cli/       command dispatcher — one cmdX function per subcommand
-internal/config/    parses friday.yaml; LoadUser / LoadProject / NewDefault
-internal/rules/     Rule type, FromSpec (string|[]string), glob expansion, token engine
-internal/engine/    plans + applies push/pull; resolves drift via the conflict UI
-internal/conflict/  interactive [k/t/d/s] prompt with line-LCS diff
-internal/drift/     SHA256 store at $UserCacheDir/friday/state.json — flags external edits
-internal/frontmatter/ parse/strip YAML frontmatter in .md files
-internal/git/       shells out to `git` for clone/pull/push/status
-internal/presets/   built-in adapter rule sets (claude/cursor/opencode/copilot)
-internal/initcmd/   `friday init` (scaffold or clone) and `friday add` (append preset)
-internal/output/    all console output (colored, TTY-aware)
+cmd/friday/           entry point — wires os.Args into cli.Run, sets version via ldflags
+internal/cli/         command dispatcher — one cmdX function per subcommand
+internal/config/      parses friday.yaml; LoadUser / LoadProject / NewDefault
+internal/rules/       Rule type, FromSpec (string|[]string), glob expansion, token engine
+internal/engine/      plans + applies push/pull; resolves drift via the conflict UI
+internal/conflict/    interactive [k/t/d/s] prompt with line-LCS diff (LineDiff is reused by report)
+internal/drift/       SHA256 store at $UserCacheDir/friday/state.json — flags external edits
+internal/frontmatter/ parse/strip YAML frontmatter in .md files (CRLF-tolerant)
+internal/git/         shells out to `git` for clone/pull/push/status
+internal/presets/     built-in adapter rule sets (claude/cursor/opencode/copilot)
+internal/initcmd/     `friday init` (scaffold or clone) and `friday add` (append preset)
+internal/output/      all console output (colored, TTY-aware)
+internal/atomicio/    WriteFile via temp + fsync + rename — used by config.Save and drift.Save
+internal/textnorm/    one home for CRLF→LF normalization (used by engine, drift, frontmatter)
 ```
 
 ## Key design rules
@@ -138,7 +141,7 @@ friday push --from-git <url|path> [adapters...]   # transient: repo → ./.claud
 friday pull [adapters...]         # user-level reverse
 friday status [adapters...]
 friday remote pull                # git pull in the user store
-friday remote push -m "msg"       # git add -A && commit && push
+friday remote push -m "msg"       # git add -A && commit && push (scaffolded .gitignore filters secrets)
 friday remote status              # git status
 ```
 

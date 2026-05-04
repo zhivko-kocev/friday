@@ -8,6 +8,25 @@ INSTALL_DIR="${FRIDAY_INSTALL_DIR:-/usr/local/bin}"
 # Detect OS / arch
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
+case "$OS" in
+  linux|darwin) ;;
+  mingw*|msys*|cygwin*|windows*)
+    cat >&2 <<EOF
+error: install.sh supports linux/darwin only.
+
+Windows install options:
+  PowerShell:   iwr -useb https://raw.githubusercontent.com/${REPO}/master/install.ps1 | iex
+  Go toolchain: go install github.com/${REPO}/cmd/friday@latest
+  Manual:       https://github.com/${REPO}/releases/latest
+EOF
+    exit 1
+    ;;
+  *)
+    echo "error: unsupported OS $OS" >&2
+    echo "       try: go install github.com/${REPO}/cmd/friday@latest" >&2
+    exit 1
+    ;;
+esac
 case "$ARCH" in
   x86_64)  ARCH="amd64" ;;
   aarch64|arm64) ARCH="arm64" ;;
@@ -61,6 +80,7 @@ fi
 echo "  friday ${LATEST} installed to ${INSTALL_DIR}/${BIN_NAME}"
 echo ""
 echo "  next steps:"
-echo "    friday init          # scaffold a new config"
-echo "    friday init --from=claude   # import from existing Claude Code setup"
-echo "    friday sync          # push config to all detected agents"
+echo "    friday init                                  # scaffold an empty user store"
+echo "    friday init --from-git <repo-url>            # clone an existing config repo"
+echo "    friday add claude                            # add the claude preset"
+echo "    friday push                                  # apply config to ~/.claude etc."
