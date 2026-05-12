@@ -6,13 +6,33 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/zhivko-kocev/friday)](https://goreportcard.com/report/github.com/zhivko-kocev/friday)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-One CLI to manage AI agent configs (Claude Code, Cursor, OpenCode, GitHub Copilot) from a single canonical store. Push to every agent, pull edits back, sync across machines via git.
+Every AI coding agent wants its config in a different folder, in a different format. Claude Code reads `~/.claude/CLAUDE.md`. OpenAI Codex reads `~/.codex/AGENTS.md`. OpenCode reads `~/.config/opencode/AGENTS.md`. GitHub Copilot reads `~/.copilot/copilot-instructions.md`. The same rule, four times in four places, drifts the moment you stop maintaining all of them.
 
-- **Store**: `~/.friday` — your `.md` files (`identity`, `rules/`, `agents/`, `commands/`, `skills/`)
-- **Agents**: `~/.claude`, `~/.cursor`, `~/.config/opencode`, `~/.github` (path conventions; configurable per adapter)
-- **Distribution**: any git remote — share with your team, your company, your other machines
+**friday** is a Go CLI that keeps one canonical store at `~/.friday/` and writes it out to every agent in the format that agent expects. Edit a target directly and `friday pull` brings the change back. Optionally back the store with a git repo to version your rules like dotfiles and sync across machines or with a team.
 
-Write your rules once. `friday push` writes them into each agent's expected layout. `friday pull` captures edits you made directly in an agent's dir. `friday remote push` ships the whole store via git so teammates run `friday init --remote <url>` and get the same setup instantly.
+```text
+$ friday push
+  pushing to installed agents: [claude codex copilot opencode]
+
+  adapter: claude
+    create   identity.md+rules/general.md  CLAUDE.md
+    create   agents/researcher.md          agents/researcher.md
+  adapter: codex
+    create   identity.md+rules/general.md  AGENTS.md
+  adapter: copilot
+    create   identity.md+rules/general.md  copilot-instructions.md
+  adapter: opencode
+    create   identity.md                   AGENTS.md
+    create   rules/general.md              rules/general.md
+
+  summary:
+    adapters: claude, codex, copilot, opencode
+    claude    2 created, 0 updated, 0 in-sync
+    codex     1 created, 0 updated, 0 in-sync
+    copilot   1 created, 0 updated, 0 in-sync
+    opencode  2 created, 0 updated, 0 in-sync
+    total     6 created, 0 updated, 0 in-sync
+```
 
 ## Install
 
@@ -66,7 +86,7 @@ friday push claude
 friday pull
 
 # Pull only one agent (legacy file-by-file conflict flow)
-friday pull cursor
+friday pull claude
 
 # Diff without writing
 friday status
@@ -86,7 +106,7 @@ See the [dotai reference repo](https://github.com/zhivko-kocev/dotai) for a work
 
 ```
 identity.md          Concatenated into CLAUDE.md / AGENTS.md / copilot-instructions.md
-rules/*.md           Per-topic rules. Concat for Claude/Copilot, split for Cursor/OpenCode
+rules/*.md           Per-topic rules. Concat for Claude/Codex/Copilot, split for OpenCode
 agents/*.md          Claude subagent definitions
 commands/*.md        Claude slash commands
 skills/<name>/       Agent skills (Claude + OpenCode)
@@ -98,11 +118,15 @@ friday.yaml          Adapter manifest. Auto-seeded by `friday init` with all fou
 | Preset     | Target dir            | Output                                                                       |
 | ---------- | --------------------- | ---------------------------------------------------------------------------- |
 | `claude`   | `~/.claude/`          | `CLAUDE.md` (concat), `agents/`, `commands/`, `skills/`                      |
-| `cursor`   | `~/.cursor/`          | `rules/_identity.md`, `rules/{filename}`                                     |
+| `codex`    | `~/.codex/`           | `AGENTS.md` (concat)                                                         |
 | `opencode` | `~/.config/opencode/` | `AGENTS.md` (identity), `rules/{filename}`, `skills/` (frontmatter stripped) |
-| `copilot`  | `~/.github/`          | `copilot-instructions.md` (concat)                                           |
+| `copilot`  | `~/.copilot/`         | `copilot-instructions.md` (concat)                                           |
 
-To disable an adapter, delete its entry from `friday.yaml`. To customize a target dir or rule, edit it. The presets only seed the manifest at init time — they don't run again.
+Paths verified against each agent's current documentation (Claude Code, [Codex CLI](https://developers.openai.com/codex/guides/agents-md), [OpenCode](https://opencode.ai/docs/config/), [Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions)).
+
+**Cursor** does not currently expose user-level rules through the filesystem; its global rules live inside Cursor's settings UI. The cursor preset was removed in v0.0.4. If Cursor adds filesystem-backed global rules (open feature request in their forum), the preset will return.
+
+To disable an adapter, delete its entry from `friday.yaml`. To customize a target dir or rule, edit it. The presets only seed the manifest at init time; they don't run again.
 
 ## Commands
 

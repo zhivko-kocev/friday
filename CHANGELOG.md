@@ -6,6 +6,18 @@ All notable changes to friday are documented here. The format follows [Keep a Ch
 
 _Nothing yet._
 
+## [0.0.4] — 2026-05-12
+
+Adapter audit against current official docs. Two breaking changes; one new built-in preset.
+
+### Added
+- `codex` preset for OpenAI Codex CLI. Targets `~/.codex/`, concatenates identity + rules into `AGENTS.md` (the file Codex actually reads, per https://developers.openai.com/codex/guides/agents-md).
+- Push/pull summary now lists adapters processed and gives a per-adapter tally (created / updated / in-sync), plus a `total` row.
+
+### Changed
+- **Breaking: `copilot` preset target moved from `~/.github/` to `~/.copilot/`** to match the path the Copilot CLI and VS Code Copilot extension actually read (`~/.copilot/copilot-instructions.md`). Users on v0.0.3 should move their file or edit `friday.yaml` to keep the old path.
+- **Breaking: `cursor` preset removed.** Cursor's user-level rules are stored inside Cursor's settings UI, not the filesystem, so the preset wrote files Cursor never reads. The preset will return when Cursor ships filesystem-backed global rules.
+
 ## [0.0.3] — 2026-05-12
 
 First open-source-ready cut. Bug fixes, new commands, and a full set of community files.
@@ -40,7 +52,8 @@ First open-source-ready cut. Bug fixes, new commands, and a full set of communit
 - Interactive conflict resolver with line-LCS diff.
 - Cross-platform: Linux, macOS, Windows.
 
-[Unreleased]: https://github.com/zhivko-kocev/friday/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/zhivko-kocev/friday/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/zhivko-kocev/friday/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/zhivko-kocev/friday/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/zhivko-kocev/friday/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/zhivko-kocev/friday/releases/tag/v0.0.1
