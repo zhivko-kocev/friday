@@ -11,18 +11,13 @@ import (
 	"strings"
 )
 
+// ErrNothingToCommit signals that StageCommitPush had no work to do.
+var ErrNothingToCommit = fmt.Errorf("nothing to commit")
+
 // Available reports whether the `git` binary is on PATH.
 func Available() bool {
 	_, err := exec.LookPath("git")
 	return err == nil
-}
-
-// IsURL is the heuristic for "this argument looks like a repo URL, not an
-// adapter name." Covers https://, ssh://, git@host:..., and *.git suffixes.
-func IsURL(s string) bool {
-	return strings.Contains(s, "://") ||
-		strings.HasPrefix(s, "git@") ||
-		strings.HasSuffix(s, ".git")
 }
 
 // ValidateURL rejects strings that git would interpret as a flag, plus
@@ -52,18 +47,6 @@ func Clone(url, dest string) error {
 // Init creates a fresh git repo at dir (which must already exist).
 func Init(dir string) error {
 	return run("-C", dir, "init", "-q")
-}
-
-// AddRemote adds (or replaces) a remote pointing at url.
-func AddRemote(dir, name, url string) error {
-	if err := ValidateURL(url); err != nil {
-		return err
-	}
-	// Try add first; on failure (already exists) replace via set-url.
-	if err := run("-C", dir, "remote", "add", "--", name, url); err == nil {
-		return nil
-	}
-	return run("-C", dir, "remote", "set-url", "--", name, url)
 }
 
 // Pull fast-forwards the repo at dir.
@@ -108,9 +91,6 @@ func StageCommitPush(dir, msg string) error {
 func Status(dir string) (string, error) {
 	return output("-C", dir, "status", "--short", "--branch")
 }
-
-// ErrNothingToCommit signals that StageCommitPush had no work to do.
-var ErrNothingToCommit = fmt.Errorf("nothing to commit")
 
 func run(args ...string) error {
 	out, err := exec.Command("git", args...).CombinedOutput()

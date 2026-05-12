@@ -23,17 +23,3 @@ func TestValidateURL(t *testing.T) {
 	}
 }
 
-func TestIsURL(t *testing.T) {
-	cases := map[string]bool{
-		"https://example.com":    true,
-		"git@github.com:foo/bar": true,
-		"foo/bar.git":            true,
-		"claude":                 false,
-		"./local":                false,
-	}
-	for in, want := range cases {
-		if got := IsURL(in); got != want {
-			t.Errorf("IsURL(%q) = %v, want %v", in, got, want)
-		}
-	}
-}

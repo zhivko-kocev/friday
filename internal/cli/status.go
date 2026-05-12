@@ -34,6 +34,14 @@ func cmdStatus(args []string) int {
 	}
 	output.Header("Friday Status (user)")
 	output.Dim("store: %s", cfg.StoreDir)
+	for _, name := range cfg.AdapterNames() {
+		abs, _ := cfg.AdapterTargetAbs(name)
+		if dirExists(abs) {
+			output.OK("%-10s [installed]  %s", name, abs)
+		} else {
+			output.Skip("%-10s [missing]    %s", name, abs)
+		}
+	}
 	report(changes, false, true)
 	return 0
 }

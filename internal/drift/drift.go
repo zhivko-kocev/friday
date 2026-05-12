@@ -14,15 +14,10 @@ import (
 	"github.com/zhivko-kocev/friday/internal/textnorm"
 )
 
-// Store is a per-project drift tracker, persisted to .friday/.drift.json.
+// Store is the drift tracker, persisted to $UserCacheDir/friday/state.json.
 type Store struct {
 	path   string
 	hashes map[string]string // "adapter:absPath" → sha256hex
-}
-
-// PathFor returns the drift store path inside a canonical store directory.
-func PathFor(storeAbs string) string {
-	return filepath.Join(storeAbs, ".drift.json")
 }
 
 // DefaultPath returns a project-independent location for the drift store —
@@ -50,8 +45,8 @@ func Load(path string) (*Store, error) {
 }
 
 // Save writes the store atomically (via temp + rename) after vacuuming entries
-// whose target file no longer exists. Vacuuming keeps the file from growing
-// unboundedly when transient project pushes target scratch directories.
+// whose target file no longer exists. Keeps the store from growing unboundedly
+// as adapters are added and removed over time.
 func (s *Store) Save() error {
 	s.vacuum()
 	data, err := json.MarshalIndent(s.hashes, "", "  ")
@@ -81,10 +76,6 @@ func (s *Store) key(adapter, absPath string) string { return adapter + ":" + abs
 
 func (s *Store) Set(adapter, absPath string, content []byte) {
 	s.hashes[s.key(adapter, absPath)] = hash(content)
-}
-
-func (s *Store) Forget(adapter, absPath string) {
-	delete(s.hashes, s.key(adapter, absPath))
 }
 
 // Check reports whether an on-disk file has drifted from what friday last wrote.

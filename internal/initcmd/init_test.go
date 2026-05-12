@@ -3,80 +3,81 @@ package initcmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zhivko-kocev/friday/internal/config"
+	"github.com/zhivko-kocev/friday/internal/presets"
 )
 
-func TestAddRemoveAdapter(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.Config{
-		Version:      1,
-		Adapters:     map[string]*config.Adapter{},
-		ManifestPath: filepath.Join(dir, "friday.yaml"),
-		StoreDir:     dir,
-	}
-	if err := AddAdapter(cfg, "claude", "", false); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := cfg.Adapters["claude"]; !ok {
-		t.Fatal("AddAdapter didn't register claude")
-	}
-	if err := AddAdapter(cfg, "claude", "", false); err == nil {
-		t.Errorf("re-adding without --force should error")
-	}
-	if err := AddAdapter(cfg, "claude", "/custom", true); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Adapters["claude"].Target != "/custom" {
-		t.Errorf("force-add did not override target")
-	}
-	if err := RemoveAdapter(cfg, "claude"); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := cfg.Adapters["claude"]; ok {
-		t.Errorf("RemoveAdapter left entry behind")
-	}
-	if err := RemoveAdapter(cfg, "claude"); err == nil {
-		t.Errorf("removing missing adapter should error")
-	}
+// withTempHome redirects $HOME (and $USERPROFILE on Windows) so config.UserStoreDir
+// resolves into a t.TempDir(). Returns the resolved store path for assertions.
+func withTempHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir prefers this on Windows
+	return filepath.Join(home, ".friday")
 }
 
-func TestSafeWipeRefusesGitDir(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+func TestRunRejectsExistingStore(t *testing.T) {
+	storeDir := withTempHome(t)
+	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := safeWipe(dir, false); err == nil {
-		t.Errorf("safeWipe with .git/ and reallyForce=false should error")
-	}
-	if _, err := os.Stat(dir); err != nil {
-		t.Errorf("dir was wiped despite refusal: %v", err)
-	}
-}
-
-func TestSafeWipeWithReallyForce(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(storeDir, "marker"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := safeWipe(dir, true); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Errorf("dir survived really-force wipe: %v", err)
-	}
-}
-
-func TestSafeWipeNoDirIsNoOp(t *testing.T) {
-	if err := safeWipe(filepath.Join(t.TempDir(), "missing"), false); err != nil {
-		t.Errorf("safeWipe on missing dir errored: %v", err)
-	}
-}
-
-func TestRunRejectsReallyForceWithoutForce(t *testing.T) {
-	err := Run(Options{ReallyForce: true})
+	err := Run(strings.NewReader("\n"))
 	if err == nil {
-		t.Fatal("expected error when --really-force passed without --force")
+		t.Fatal("expected error when ~/.friday already exists")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("error message missing 'already exists': %v", err)
+	}
+}
+
+func TestRunScaffoldsOnBlankInput(t *testing.T) {
+	storeDir := withTempHome(t)
+	if err := Run(strings.NewReader("\n")); err != nil {
+		t.Fatalf("Run with blank input failed: %v", err)
+	}
+
+	// Skeleton files
+	for _, rel := range []string{"identity.md", "rules/general.md", ".gitignore", "friday.yaml"} {
+		if _, err := os.Stat(filepath.Join(storeDir, rel)); err != nil {
+			t.Errorf("missing %s: %v", rel, err)
+		}
+	}
+	// Empty subdirs with .gitkeep
+	for _, sub := range []string{"rules", "agents", "commands", "skills"} {
+		if _, err := os.Stat(filepath.Join(storeDir, sub, ".gitkeep")); err != nil {
+			t.Errorf("missing %s/.gitkeep: %v", sub, err)
+		}
+	}
+
+	// friday.yaml seeded with every built-in preset
+	cfg, err := config.LoadUser()
+	if err != nil {
+		t.Fatalf("LoadUser after scaffold: %v", err)
+	}
+	if len(cfg.Adapters) != len(presets.Names()) {
+		t.Errorf("manifest has %d adapters, want %d (all presets)", len(cfg.Adapters), len(presets.Names()))
+	}
+}
+
+func TestRunCloneRejectsFlagLikeURL(t *testing.T) {
+	withTempHome(t)
+	err := Run(strings.NewReader("--upload-pack=evil\n"))
+	if err == nil {
+		t.Fatal("expected ValidateURL to reject flag-like input")
+	}
+}
+
+func TestRunTrimsURLWhitespace(t *testing.T) {
+	withTempHome(t)
+	// Whitespace-only input should behave as blank → scaffold.
+	if err := Run(strings.NewReader("   \n")); err != nil {
+		t.Fatalf("whitespace-only input should scaffold, got: %v", err)
 	}
 }

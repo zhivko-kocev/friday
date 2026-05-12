@@ -27,7 +27,7 @@ func cmdRemote(args []string) int {
 	}
 	if !git.IsRepo(storeDir) {
 		output.Err("user store at %s is not a git repo", storeDir)
-		output.Dim("hint: cd into it and `git init`, or `friday init --from-git <url>` to start with one")
+		output.Dim("hint: run `friday init` and provide a remote URL to set up a git-backed store")
 		return 1
 	}
 
@@ -43,7 +43,7 @@ func cmdRemote(args []string) int {
 	case "push":
 		fs := flag.NewFlagSet("remote push", flag.ContinueOnError)
 		// Two flags pointing at the same string: -m is short, --message is conventional.
-		// flagPair preserves the "first set wins" rule.
+		// First-set-wins: if both are provided, -m takes priority.
 		short := fs.String("m", "", "commit message (required)")
 		long := fs.String("message", "", "alias for -m")
 		if err := fs.Parse(args[1:]); err != nil {

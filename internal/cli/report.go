@@ -9,7 +9,8 @@ import (
 	"github.com/zhivko-kocev/friday/internal/output"
 )
 
-// report prints a per-adapter summary of changes the engine produced.
+// report prints a per-adapter summary of changes the engine produced,
+// then a one-line totals tally so the user doesn't have to scan the body.
 func report(changes []engine.Change, showDiff, dryRun bool) {
 	if len(changes) == 0 {
 		output.Dim("no changes")
@@ -42,6 +43,34 @@ func report(changes []engine.Change, showDiff, dryRun bool) {
 			}
 		}
 	}
+	printSummary(changes, dryRun)
+}
+
+// printSummary tallies actions across every adapter. Skipped here when the
+// caller already knows the answer (no changes case is handled above).
+func printSummary(changes []engine.Change, dryRun bool) {
+	var created, updated, inSync, conflict, skipped int
+	for _, ch := range changes {
+		switch ch.Action {
+		case engine.ActionCreate:
+			created++
+		case engine.ActionUpdate:
+			updated++
+		case engine.ActionInSync:
+			inSync++
+		case engine.ActionConflict:
+			conflict++
+		case engine.ActionMissingSource, engine.ActionUnsupported:
+			skipped++
+		}
+	}
+	prefix := "summary:"
+	if dryRun {
+		prefix = "summary (dry-run):"
+	}
+	output.Header(prefix)
+	output.Dim("  %d created, %d updated, %d in-sync, %d conflict(s), %d skipped",
+		created, updated, inSync, conflict, skipped)
 }
 
 func formatLine(ch engine.Change, dryRun bool) string {

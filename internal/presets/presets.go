@@ -2,12 +2,11 @@
 // hand-write friday.yaml for the common agents.
 //
 // Each preset mirrors the layout that the corresponding agent expects.
-// `friday init --adapters claude` writes the claude preset into friday.yaml;
-// `friday add cursor` appends the cursor preset to an existing friday.yaml.
+// `friday init` seeds friday.yaml with all built-in presets; to disable one,
+// delete its entry from friday.yaml.
 package presets
 
 import (
-	"fmt"
 	"sort"
 
 	"github.com/zhivko-kocev/friday/internal/config"
@@ -15,10 +14,9 @@ import (
 )
 
 type Preset struct {
-	Name    string
-	Target  string
-	Rules   []*rules.Rule
-	Comment string // shown by `friday add` to explain what was added
+	Name   string
+	Target string
+	Rules  []*rules.Rule
 }
 
 func (p Preset) Adapter() *config.Adapter {
@@ -39,7 +37,6 @@ var registry = map[string]Preset{
 			{From: rules.FromSpec{"commands/*.md"}, To: "commands/{filename}"},
 			{From: rules.FromSpec{"skills/**/*"}, To: "skills/{relpath}"},
 		},
-		Comment: "Claude Code: identity+rules concatenated into CLAUDE.md, plus agents/commands/skills mirrored",
 	},
 	"cursor": {
 		Name:   "cursor",
@@ -48,11 +45,11 @@ var registry = map[string]Preset{
 			{From: rules.FromSpec{"identity.md"}, To: "rules/_identity.md"},
 			{From: rules.FromSpec{"rules/*.md"}, To: "rules/{filename}"},
 		},
-		Comment: "Cursor: identity + rules each as standalone .md files under .cursor/rules/",
 	},
 	"opencode": {
-		Name:   "opencode",
-		Target: ".opencode",
+		Name: "opencode",
+		// OpenCode follows XDG: global config at $HOME/.config/opencode.
+		Target: ".config/opencode",
 		Rules: []*rules.Rule{
 			{From: rules.FromSpec{"identity.md"}, To: "AGENTS.md"},
 			{From: rules.FromSpec{"rules/*.md"}, To: "rules/{filename}"},
@@ -62,7 +59,6 @@ var registry = map[string]Preset{
 				FrontmatterStrip: []string{"when_to_use", "allowed-tools"},
 			},
 		},
-		Comment: "OpenCode: identity → AGENTS.md, rules mirrored, skills with Claude-specific frontmatter stripped",
 	},
 	"copilot": {
 		Name:   "copilot",
@@ -74,7 +70,6 @@ var registry = map[string]Preset{
 				Strategy: rules.StrategyConcatenate,
 			},
 		},
-		Comment: "GitHub Copilot: identity+rules concatenated into .github/copilot-instructions.md",
 	},
 }
 
@@ -104,15 +99,6 @@ func Names() []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// Resolve looks up a preset by name and errors with a useful message if missing.
-func Resolve(name string) (Preset, error) {
-	p, ok := Get(name)
-	if !ok {
-		return Preset{}, fmt.Errorf("unknown preset %q (available: %v)", name, Names())
-	}
-	return p, nil
 }
 
 // AllAdapters returns every preset rendered as a config.Adapter, keyed by

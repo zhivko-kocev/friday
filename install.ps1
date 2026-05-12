@@ -69,10 +69,8 @@ try {
 
     Write-Host ""
     Write-Host "  next steps:"
-    Write-Host "    friday init                                  # scaffold an empty user store"
-    Write-Host "    friday init --from-git <repo-url>            # clone an existing config repo"
-    Write-Host "    friday add claude                            # add the claude preset"
-    Write-Host "    friday push                                  # apply config to ~/.claude etc."
+    Write-Host "    friday init                                  # scaffold a store, or clone an existing config repo"
+    Write-Host "    friday push                                  # apply config to ~/.claude, ~/.cursor, etc."
 }
 finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

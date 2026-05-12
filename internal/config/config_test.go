@@ -7,47 +7,18 @@ import (
 	"testing"
 )
 
-func TestLoadProject(t *testing.T) {
-	dir := t.TempDir()
-	manifest := []byte(`version: 1
-adapters:
-  claude:
-    target: .claude
-    rules:
-      - from: identity.md
-        to: CLAUDE.md
-`)
-	if err := os.WriteFile(filepath.Join(dir, "friday.yaml"), manifest, 0o644); err != nil {
+func TestLoadUserVersionMismatch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	storeDir := filepath.Join(home, ".friday")
+	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cwd := t.TempDir()
-	cfg, err := LoadProject(dir, cwd)
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(storeDir, "friday.yaml"), []byte("version: 99\nadapters: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Scope != ScopeProject {
-		t.Errorf("scope = %v", cfg.Scope)
-	}
-	if cfg.TargetRoot != cwd {
-		t.Errorf("TargetRoot = %s, want %s", cfg.TargetRoot, cwd)
-	}
-	if cfg.Adapters["claude"].Target != ".claude" {
-		t.Errorf("claude.target = %q", cfg.Adapters["claude"].Target)
-	}
-}
-
-func TestLoadProjectMissingManifest(t *testing.T) {
-	if _, err := LoadProject(t.TempDir(), t.TempDir()); err != ErrNoManifest {
-		t.Errorf("err = %v, want ErrNoManifest", err)
-	}
-}
-
-func TestLoadProjectVersionMismatch(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "friday.yaml"), []byte("version: 99\nadapters: {}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadProject(dir, t.TempDir()); err == nil {
+	if _, err := LoadUser(); err == nil {
 		t.Errorf("expected unsupported-version error")
 	}
 }
@@ -98,18 +69,22 @@ func TestSelectAdaptersValidates(t *testing.T) {
 }
 
 func TestSaveRoundTrip(t *testing.T) {
-	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	storeDir := filepath.Join(home, ".friday")
+	if err := os.MkdirAll(storeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	cfg := &Config{
 		Version:      1,
-		ManifestPath: filepath.Join(dir, "friday.yaml"),
-		Adapters: map[string]*Adapter{
-			"claude": {Target: ".claude"},
-		},
+		ManifestPath: filepath.Join(storeDir, "friday.yaml"),
+		Adapters:     map[string]*Adapter{"claude": {Target: ".claude"}},
 	}
 	if err := cfg.Save(); err != nil {
 		t.Fatal(err)
 	}
-	out, err := LoadProject(dir, t.TempDir())
+	out, err := LoadUser()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,20 +1,14 @@
-// Package config loads friday.yaml and resolves paths according to scope.
+// Package config loads friday.yaml and resolves paths for the user-level store.
 //
-// There are two scopes:
-//
-//   - User scope: the manifest at $UserConfigDir/friday/friday.yaml manages
-//     the user's home agent dirs (~/.claude, ~/.cursor, ...). The store dir
-//     IS the directory that contains the manifest — flat, no nested store/.
-//
-//   - Project scope: the manifest comes from a freshly-cloned git repo and
-//     manages the current project's agent dirs (./.claude, ./.cursor, ...).
-//     Nothing persists locally — the clone is a temporary holding pen.
+// The manifest at $HOME/.friday/friday.yaml controls every agent dir on the
+// machine (~/.claude, ~/.cursor, ...). The store dir IS the directory that
+// contains the manifest — flat, no nested store/.
 //
 // Path resolution for `target:` and rule destinations:
 //
 //   - absolute path  →  used as-is
 //   - leading "~/"   →  expanded to $HOME/...
-//   - relative       →  joined with TargetRoot ($HOME for user, CWD for project)
+//   - relative       →  joined with TargetRoot ($HOME for user scope)
 package config
 
 import (
@@ -38,21 +32,13 @@ const ManifestName = "friday.yaml"
 // falling back to the built-in presets.
 var ErrNoManifest = errors.New("no friday.yaml")
 
-// Scope distinguishes user-level (persistent home dir) from project-level
-// (transient, repo-driven) operation.
+// Scope identifies which store the config was loaded from. Currently only
+// user scope is supported; project scope is reserved for a future release.
 type Scope int
 
-const (
-	ScopeUser Scope = iota
-	ScopeProject
-)
+const ScopeUser Scope = iota
 
-func (s Scope) String() string {
-	if s == ScopeUser {
-		return "user"
-	}
-	return "project"
-}
+func (s Scope) String() string { return "user" }
 
 // Config is the parsed friday.yaml plus runtime context (scope, paths).
 type Config struct {
@@ -72,18 +58,17 @@ type Adapter struct {
 	Rules  []*rules.Rule `yaml:"rules"`
 }
 
-// UserStoreDir returns the canonical user-level store directory:
-// $UserConfigDir/friday. On Linux/macOS that's $XDG_CONFIG_HOME/friday or
-// ~/.config/friday; on Windows %APPDATA%\friday.
+// UserStoreDir returns the canonical user-level store directory: $HOME/.friday.
+// One store per user, shared across every project on the machine.
 func UserStoreDir() (string, error) {
-	base, err := os.UserConfigDir()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, "friday"), nil
+	return filepath.Join(home, ".friday"), nil
 }
 
-// LoadUser loads the user-level manifest from $UserConfigDir/friday/friday.yaml.
+// LoadUser loads the user-level manifest from $HOME/.friday/friday.yaml.
 // Returns ErrNoManifest if the file is missing (the store dir may still exist
 // — a cloned repo without friday.yaml is the common case).
 func LoadUser() (*Config, error) {
@@ -103,21 +88,6 @@ func LoadUser() (*Config, error) {
 		return nil, err
 	}
 	return load(manifestPath, ScopeUser, storeDir, home)
-}
-
-// LoadProject loads a manifest from a freshly-cloned repo dir, with target
-// resolution rooted at projectRoot (typically the developer's CWD).
-// Returns ErrNoManifest if the repo has no friday.yaml — this is the normal
-// case for content-only repos.
-func LoadProject(repoDir, projectRoot string) (*Config, error) {
-	manifestPath := filepath.Join(repoDir, ManifestName)
-	if _, err := os.Stat(manifestPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrNoManifest
-		}
-		return nil, err
-	}
-	return load(manifestPath, ScopeProject, repoDir, projectRoot)
 }
 
 // NewDefault constructs an in-memory Config with no on-disk manifest. Used as

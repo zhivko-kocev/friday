@@ -2,41 +2,21 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/zhivko-kocev/friday/internal/config"
 	"github.com/zhivko-kocev/friday/internal/output"
-	"github.com/zhivko-kocev/friday/internal/presets"
 )
 
-// cmdList — show available presets and (if there's a manifest) configured
-// adapters. Subcommands: presets | adapters | (default: both).
+// cmdList — show every adapter configured in friday.yaml plus whether its
+// target dir is present on this machine. Argument is accepted but ignored
+// (back-compat for `friday list adapters`); this UX is deliberately one view.
 func cmdList(args []string) int {
-	what := ""
-	if len(args) > 0 {
-		what = args[0]
-	}
-	switch what {
-	case "presets":
-		printPresets()
-	case "adapters":
-		return printAdapters()
-	case "", "all":
-		printPresets()
-		fmt.Println()
-		return printAdapters()
-	default:
-		output.Err("unknown list target %q (want: presets, adapters)", what)
+	if len(args) > 0 && args[0] != "adapters" && args[0] != "all" {
+		output.Err("unknown list target %q (want: adapters)", args[0])
 		return 1
 	}
-	return 0
-}
-
-func printPresets() {
-	output.Header("Available presets")
-	for _, n := range presets.Names() {
-		p, _ := presets.Get(n)
-		fmt.Printf("  %-10s %s\n", n, p.Comment)
-	}
+	return printAdapters()
 }
 
 func printAdapters() int {
@@ -56,13 +36,17 @@ func printAdapters() int {
 		return 1
 	}
 	if len(cfg.Adapters) == 0 {
-		output.Dim("(none configured — push falls back to all built-in presets)")
+		output.Dim("(no adapters in friday.yaml — push has nothing to do)")
 		return 0
 	}
 	for _, name := range cfg.AdapterNames() {
 		ad := cfg.Adapters[name]
 		abs, _ := cfg.AdapterTargetAbs(name)
-		fmt.Printf("  %-10s target: %s\n", name, abs)
+		marker := "missing"
+		if dirExists(abs) {
+			marker = "installed"
+		}
+		fmt.Printf("  %-10s [%s]  target: %s\n", name, marker, abs)
 		for _, r := range ad.Rules {
 			strat := r.Strategy
 			if strat == "" {
@@ -72,4 +56,11 @@ func printAdapters() int {
 		}
 	}
 	return 0
+}
+
+// dirExists reports whether path is an existing directory. Used to flag an
+// adapter as "installed" — i.e. friday push (no args) will target it.
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }

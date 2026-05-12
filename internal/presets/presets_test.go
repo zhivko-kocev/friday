@@ -21,12 +21,6 @@ func TestGetReturnsDeepCopy(t *testing.T) {
 	}
 }
 
-func TestResolveUnknown(t *testing.T) {
-	if _, err := Resolve("not-a-preset"); err == nil {
-		t.Errorf("Resolve(unknown) returned nil error")
-	}
-}
-
 func TestNamesIsSortedAndComplete(t *testing.T) {
 	names := Names()
 	want := []string{"claude", "copilot", "cursor", "opencode"}

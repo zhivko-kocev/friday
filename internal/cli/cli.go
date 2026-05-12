@@ -4,7 +4,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/zhivko-kocev/friday/internal/output"
 )
@@ -29,14 +28,12 @@ func Run(args []string, ver string) int {
 		return cmdStatus(args[1:])
 	case "init":
 		return cmdInit(args[1:])
-	case "add":
-		return cmdAdd(args[1:])
-	case "remove", "rm":
-		return cmdRemove(args[1:])
 	case "list", "ls":
 		return cmdList(args[1:])
 	case "remote":
 		return cmdRemote(args[1:])
+	case "doctor":
+		return cmdDoctor(args[1:])
 	case "version", "--version", "-v":
 		fmt.Println("friday " + version)
 		return 0
@@ -63,18 +60,4 @@ func applyGlobalFlags(args []string) []string {
 		out = append(out, a)
 	}
 	return out
-}
-
-// multiFlag accepts repeated --adapters flags AND comma-separated values.
-type multiFlag []string
-
-func (m *multiFlag) String() string { return strings.Join(*m, ",") }
-func (m *multiFlag) Set(v string) error {
-	for _, p := range strings.Split(v, ",") {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			*m = append(*m, p)
-		}
-	}
-	return nil
 }

@@ -3,61 +3,52 @@ package cli
 import "fmt"
 
 func printUsage() {
-	fmt.Print(`friday — manage AI-agent config across user and project scopes
+	fmt.Print(`friday — manage AI agent configs from a single canonical store
+
+  Store:         ~/.friday — your .md files (identity, rules, agents, commands, skills)
+  Agents:        ~/.claude, ~/.cursor, ~/.config/opencode, ~/.github (Claude Code, Cursor, OpenCode, Copilot)
+  Distribution:  any git remote — share with your team, your company, your other machines
 
 Usage:
   friday <command> [flags] [args]
 
 Commands:
-  init                       Scaffold (or clone) the user store at $UserConfigDir/friday
-  add <preset>               Add (or override) a preset adapter in the user store's friday.yaml
-  remove <adapter>           Remove an adapter entry from friday.yaml (alias: rm)
-  list [presets|adapters]    Show available presets and configured adapters (alias: ls)
-  push [adapters...]         Apply user store rules to ~/.claude, ~/.cursor, ...
-  push --from-git URL        Transient: clone repo, apply rules to ./.claude, ..., discard
-  pull [adapters...]         Read user-level targets back into the user store
+  init [flags]               Prompt for a remote URL; clone it into ~/.friday, or scaffold an empty store on blank input
+  list [adapters]            Show every adapter in friday.yaml + whether it's installed on this machine (alias: ls)
+  push [adapters...]         Compile ~/.friday into installed agents' dirs (no args = every installed agent)
+  pull [adapters...]         Capture edits from agent dirs back into ~/.friday (no args = per-agent prompt + diff)
   status [adapters...]       Show user-level diff (no writes)
-  remote pull                git pull in the user store
-  remote push -m MSG         git add+commit+push in the user store
-  remote status              git status in the user store
+  doctor                     Run a health check on the local install (store, manifest, drift)
+  remote pull|push|status    git pull / commit+push / status on ~/.friday
   version                    Print version
 
 Global flags (work with any command):
   --no-color        Disable colored output (also: NO_COLOR or FRIDAY_NO_COLOR env)
 
+init flags:
+  --remote URL      Clone URL into ~/.friday (skips the prompt — for scripts)
+  --scaffold        Scaffold an empty store without prompting
+
 Common flags (push / pull):
   --dry-run         Show changes without writing
-  --force           Overwrite without prompting on drift
-  --no-interactive  Skip conflict prompts (CI mode); conflicts become skip
-  --diff            Print line diff for each change
-
-Init flags:
-  --from-git URL    Clone the user store from a git repo
-  --remote URL      After scaffold, register this URL as the origin remote
-  --no-git          Skip the git init step on scaffold
-  --adapters list   Comma-separated preset list (claude,cursor,opencode,copilot)
-  --force           Overwrite an existing user store (refuses if a .git/ is present)
-  --really-force    Allow --force to wipe a store that contains a .git/ dir
-
-Add flags:
-  --target dir      Override the preset's default target directory
-  --force           Replace an existing adapter entry
-  --list            List available presets and exit
+  --force           Overwrite without prompting
+  --no-interactive  Skip prompts (CI mode); push proceeds without confirmation, pull falls back to legacy batch flow
 
 Remote push flags:
   -m, --message     Commit message (required)
 
 Examples:
-  friday init                                   # empty user store
-  friday init --adapters claude,cursor          # user store with two adapters
-  friday init --from-git https://...            # clone existing config
-  friday add opencode                           # add a preset later
-  friday remove opencode                        # take it back out
-  friday list adapters                          # what's configured today
-  friday push                                          # apply user store to ~/.claude etc.
-  friday push --from-git https://github.com/me/cfg     # apply repo content to ./.claude etc.
-  friday push --from-git ../local-config-repo          # local path also works
-  friday pull cursor                            # capture ~/.cursor edits back
-  friday remote push -m "tweak rules"           # commit & push the user store
+  friday init                                    # interactive: prompt for remote URL
+  friday init --scaffold                         # non-interactive: empty scaffold
+  friday init --remote https://github.com/me/dotai   # non-interactive: clone
+
+  friday push                                    # push to every installed agent
+  friday push claude                             # push only to claude (creates target dir if missing)
+
+  friday pull                                    # walk each installed agent: show diff, ask apply / skip / quit
+  friday pull cursor                             # legacy: pull cursor only, file-level conflicts
+
+  friday doctor                                  # diagnose store, manifest, drift in one read-only pass
+  friday remote push -m "tweak rules"            # commit & push ~/.friday to its git remote
 `)
 }
