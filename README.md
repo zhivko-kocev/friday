@@ -1,6 +1,18 @@
 # friday
 
-Manage AI-agent config (Claude Code, Cursor, OpenCode, Copilot) from one canonical store. One source of truth for `identity.md`, `rules/`, `agents/`, `commands/`, `skills/` — push it out to every agent's home dir, pull edits back.
+[![test](https://github.com/zhivko-kocev/friday/actions/workflows/test.yml/badge.svg)](https://github.com/zhivko-kocev/friday/actions/workflows/test.yml)
+[![release](https://img.shields.io/github/v/release/zhivko-kocev/friday?sort=semver&display_name=tag)](https://github.com/zhivko-kocev/friday/releases)
+[![Go Reference](https://pkg.go.dev/badge/github.com/zhivko-kocev/friday.svg)](https://pkg.go.dev/github.com/zhivko-kocev/friday)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zhivko-kocev/friday)](https://goreportcard.com/report/github.com/zhivko-kocev/friday)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+One CLI to manage AI agent configs (Claude Code, Cursor, OpenCode, GitHub Copilot) from a single canonical store. Push to every agent, pull edits back, sync across machines via git.
+
+- **Store**: `~/.friday` — your `.md` files (`identity`, `rules/`, `agents/`, `commands/`, `skills/`)
+- **Agents**: `~/.claude`, `~/.cursor`, `~/.config/opencode`, `~/.github` (path conventions; configurable per adapter)
+- **Distribution**: any git remote — share with your team, your company, your other machines
+
+Write your rules once. `friday push` writes them into each agent's expected layout. `friday pull` captures edits you made directly in an agent's dir. `friday remote push` ships the whole store via git so teammates run `friday init --remote <url>` and get the same setup instantly.
 
 ## Install
 
@@ -18,9 +30,9 @@ Override the install dir with `FRIDAY_INSTALL_DIR=$HOME/bin`.
 iwr -useb https://raw.githubusercontent.com/zhivko-kocev/friday/master/install.ps1 | iex
 ```
 
-Override with `$env:FRIDAY_INSTALL_DIR` before piping. The script prints the exact `[Environment]::SetEnvironmentVariable` command if the dir isn't on your user PATH.
+Override with `$env:FRIDAY_INSTALL_DIR` before piping.
 
-**With the Go toolchain** — anywhere Go is installed:
+**With the Go toolchain**:
 
 ```bash
 go install github.com/zhivko-kocev/friday/cmd/friday@latest
@@ -39,31 +51,38 @@ Pre-built binaries: see the [releases page](https://github.com/zhivko-kocev/frid
 ## Quick start
 
 ```bash
-# scaffold an empty user store
-friday init
+# Initialize ~/.friday.
+friday init                                    # interactive: prompt for remote URL
+friday init --scaffold                         # non-interactive: empty store
+friday init --remote https://github.com/me/dotai   # non-interactive: clone
 
-# or clone an existing config repo as your user store
-friday init --from-git https://github.com/zhivko-kocev/dotai
-
-# add a preset adapter
-friday add claude
-
-# push to every configured adapter (~/.claude, ~/.cursor, ...)
+# Push to every agent that's installed on this machine
 friday push
 
-# capture edits made directly in ~/.claude back into the store
-friday pull claude
+# Push only to one agent (creates target dir on first run)
+friday push claude
 
-# diff without writing
+# Walk each installed agent: show diff, ask apply / skip / quit
+friday pull
+
+# Pull only one agent (legacy file-by-file conflict flow)
+friday pull cursor
+
+# Diff without writing
 friday status
 
-# commit + push the user store to its remote
+# Read-only health check on the local install
+friday doctor
+
+# Commit + push ~/.friday to its git remote
 friday remote push -m "tweak rules"
 ```
 
-## Layout for a config store
+Non-interactive forms for CI / scripting also exist for `push`/`pull` via `--no-interactive`.
 
-See [the dotai standard layout](https://github.com/zhivko-kocev/dotai) for the canonical structure.
+## The `~/.friday` layout
+
+See the [dotai reference repo](https://github.com/zhivko-kocev/dotai) for a working example.
 
 ```
 identity.md          Concatenated into CLAUDE.md / AGENTS.md / copilot-instructions.md
@@ -71,31 +90,44 @@ rules/*.md           Per-topic rules. Concat for Claude/Copilot, split for Curso
 agents/*.md          Claude subagent definitions
 commands/*.md        Claude slash commands
 skills/<name>/       Agent skills (Claude + OpenCode)
+friday.yaml          Adapter manifest. Auto-seeded by `friday init` with all four presets.
 ```
 
 ## Built-in presets
 
-| Preset    | Target dir                      | What it writes                                                             |
-| --------- | ------------------------------- | -------------------------------------------------------------------------- |
-| `claude`  | `~/.claude/`                    | `CLAUDE.md` (concat), `agents/`, `commands/`, `skills/`                    |
-| `cursor`  | `~/.cursor/`                    | `rules/_identity.md`, `rules/{filename}`                                   |
-| `opencode`| `~/.config/opencode/`           | `AGENTS.md` (identity), `rules/{filename}`, `skills/` (frontmatter stripped)|
-| `copilot` | `~/.github/`                    | `copilot-instructions.md` (concat)                                         |
+| Preset     | Target dir            | Output                                                                       |
+| ---------- | --------------------- | ---------------------------------------------------------------------------- |
+| `claude`   | `~/.claude/`          | `CLAUDE.md` (concat), `agents/`, `commands/`, `skills/`                      |
+| `cursor`   | `~/.cursor/`          | `rules/_identity.md`, `rules/{filename}`                                     |
+| `opencode` | `~/.config/opencode/` | `AGENTS.md` (identity), `rules/{filename}`, `skills/` (frontmatter stripped) |
+| `copilot`  | `~/.github/`          | `copilot-instructions.md` (concat)                                           |
+
+To disable an adapter, delete its entry from `friday.yaml`. To customize a target dir or rule, edit it. The presets only seed the manifest at init time — they don't run again.
 
 ## Commands
 
 ```
-init                Scaffold or clone the user store
-add <preset>        Append a preset adapter to friday.yaml
-remove <adapter>    Remove an adapter
-list                Show configured adapters and available presets
-push [adapters...]  Apply user store → agent dirs
-pull [adapters...]  Capture edits in agent dirs → user store
-status              Diff store vs targets (no writes)
-remote pull|push|status   git operations on the user store
+init [flags]               Prompt for a remote URL; clone or scaffold ~/.friday
+list                       Adapters in friday.yaml + whether each is installed
+push [adapters...]         Write ~/.friday into each installed agent's dir
+pull [adapters...]         No args = per-agent diff + apply prompt; with args = legacy batch
+status [adapters...]       Show diff without writing
+doctor                     Read-only health check (store, manifest, drift)
+remote pull|push|status    git operations on ~/.friday
 ```
 
 Run `friday help` for full flags.
+
+## Safety
+
+- **Atomic writes** — every target file is written via a temp file + rename, so a Ctrl-C mid-write leaves the previous version intact.
+- **Drift detection** — friday tracks SHA256 of every file it writes and refuses to clobber edits you've made directly in an agent's dir. Resolve interactively or with `--force`.
+- **CRLF tolerance** — Windows checkouts don't get flagged as drift.
+- **No secrets** — the scaffolded `.gitignore` filters `.env`, `*.key`, `*.pem`, and Claude Code's runtime state dirs.
+
+## Contributing
+
+Issues and PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build/test instructions and the [ROADMAP](ROADMAP.md) for where we're headed.
 
 ## License
 

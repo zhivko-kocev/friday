@@ -1,0 +1,50 @@
+name: Bug report
+description: Something friday does is wrong or broken.
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. The more reproducible your report, the faster it gets fixed.
+  - type: input
+    id: version
+    attributes:
+      label: friday version
+      description: Output of `friday version`.
+      placeholder: "friday v0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS / architecture
+      placeholder: "macOS 14.5 / arm64, Ubuntu 24.04 / amd64, Windows 11 / amd64"
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Minimal commands + minimal `friday.yaml` that demonstrate the bug.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+      description: Full output, error messages, stack traces.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Anything else? Tried with `--no-color`? Tried `friday doctor`?

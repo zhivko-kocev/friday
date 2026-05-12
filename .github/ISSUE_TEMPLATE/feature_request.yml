@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest a new command, flag, preset, or behavior.
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [ROADMAP](../../ROADMAP.md) first — your idea might already be planned.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do? What's frustrating about the current behavior?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should friday do instead? CLI shape, config shape, anything concrete.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Other ways this could be solved (or why workarounds aren't enough).
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - New preset (adapter for an agent)
+        - New CLI command
+        - New flag on existing command
+        - Behavior change to existing command
+        - Other
+    validations:
+      required: true
