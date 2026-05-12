@@ -46,31 +46,82 @@ func report(changes []engine.Change, showDiff, dryRun bool) {
 	printSummary(changes, dryRun)
 }
 
-// printSummary tallies actions across every adapter. Skipped here when the
-// caller already knows the answer (no changes case is handled above).
+// tally is the per-action count for one adapter (or the grand total).
+type tally struct {
+	created, updated, inSync, conflict, skipped int
+}
+
+func (t tally) add(other tally) tally {
+	return tally{
+		created:  t.created + other.created,
+		updated:  t.updated + other.updated,
+		inSync:   t.inSync + other.inSync,
+		conflict: t.conflict + other.conflict,
+		skipped:  t.skipped + other.skipped,
+	}
+}
+
+func (t tally) format() string {
+	parts := []string{
+		fmt.Sprintf("%d created", t.created),
+		fmt.Sprintf("%d updated", t.updated),
+		fmt.Sprintf("%d in-sync", t.inSync),
+	}
+	if t.conflict > 0 {
+		parts = append(parts, fmt.Sprintf("%d conflict(s)", t.conflict))
+	}
+	if t.skipped > 0 {
+		parts = append(parts, fmt.Sprintf("%d skipped", t.skipped))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// printSummary lists the adapters touched, the per-action tally for each, and
+// a grand total. Conflict/skipped buckets are omitted from rows where the
+// count is zero so the common path stays terse.
 func printSummary(changes []engine.Change, dryRun bool) {
-	var created, updated, inSync, conflict, skipped int
+	byAdapter := map[string]tally{}
+	order := []string{}
 	for _, ch := range changes {
+		if _, seen := byAdapter[ch.Adapter]; !seen {
+			order = append(order, ch.Adapter)
+		}
+		t := byAdapter[ch.Adapter]
 		switch ch.Action {
 		case engine.ActionCreate:
-			created++
+			t.created++
 		case engine.ActionUpdate:
-			updated++
+			t.updated++
 		case engine.ActionInSync:
-			inSync++
+			t.inSync++
 		case engine.ActionConflict:
-			conflict++
+			t.conflict++
 		case engine.ActionMissingSource, engine.ActionUnsupported:
-			skipped++
+			t.skipped++
 		}
+		byAdapter[ch.Adapter] = t
 	}
+
 	prefix := "summary:"
 	if dryRun {
 		prefix = "summary (dry-run):"
 	}
 	output.Header(prefix)
-	output.Dim("  %d created, %d updated, %d in-sync, %d conflict(s), %d skipped",
-		created, updated, inSync, conflict, skipped)
+	output.Dim("  adapters: %s", strings.Join(order, ", "))
+
+	width := 0
+	for _, name := range order {
+		if len(name) > width {
+			width = len(name)
+		}
+	}
+	var grand tally
+	for _, name := range order {
+		t := byAdapter[name]
+		output.Dim("  %-*s  %s", width, name, t.format())
+		grand = grand.add(t)
+	}
+	output.Dim("  %-*s  %s", width, "total", grand.format())
 }
 
 func formatLine(ch engine.Change, dryRun bool) string {
