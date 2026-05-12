@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/zhivko-kocev/friday/internal/atomicio"
 	"github.com/zhivko-kocev/friday/internal/config"
 	"github.com/zhivko-kocev/friday/internal/drift"
 	"github.com/zhivko-kocev/friday/internal/output"
@@ -33,11 +34,6 @@ func Push(cfg *config.Config, opts Options) ([]Change, error) {
 // rules and rules with frontmatter_strip are skipped as unsupported.
 func Pull(cfg *config.Config, opts Options) ([]Change, error) {
 	return run(cfg, opts, DirPull)
-}
-
-// Status reports the diff between store and targets without writing.
-func Status(cfg *config.Config) ([]Change, error) {
-	return run(cfg, Options{DryRun: true}, DirPush)
 }
 
 func run(cfg *config.Config, opts Options, dir Direction) ([]Change, error) {
@@ -160,12 +156,9 @@ func apply(ch *Change, store *drift.Store, dir Direction) (bool, error) {
 		if mode == 0 {
 			mode = defaultFileMode
 		}
-		if err := os.WriteFile(ch.DestPath, ch.NewContent, mode); err != nil {
-			return false, err
-		}
-		// WriteFile only honors the perm bits on create; chmod ensures
-		// pre-existing targets pick up the executable bit too.
-		if err := os.Chmod(ch.DestPath, mode); err != nil {
+		// Atomic write — a Ctrl-C mid-write leaves the previous file intact
+		// rather than a half-written target.
+		if err := atomicio.WriteFile(ch.DestPath, ch.NewContent, mode); err != nil {
 			return false, err
 		}
 		// Drift store only tracks adapter targets (push direction). On pull

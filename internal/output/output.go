@@ -54,9 +54,13 @@ func Err(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "  "+col(cRed, "✗")+" "+format+"\n", args...)
 }
 func Info(format string, args ...any) { fmt.Printf("  "+col(cCyan, "→")+" "+format+"\n", args...) }
-func Header(s string)                 { fmt.Printf("\n" + col(cBold, s) + "\n") }
+
+// Header and Dim render an already-formatted string. The two-step
+// "Sprintf then Print" pattern avoids a second pass where literal %
+// in paths would be re-interpreted as format verbs.
+func Header(s string) { fmt.Print("\n" + col(cBold, s) + "\n") }
 func Dim(format string, args ...any) {
-	fmt.Printf("  " + col(cGray, fmt.Sprintf(format, args...)) + "\n")
+	fmt.Println("  " + col(cGray, fmt.Sprintf(format, args...)))
 }
 
 func DiffLine(line string) {
