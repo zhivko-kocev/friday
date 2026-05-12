@@ -1,10 +1,14 @@
 # friday
 
-One CLI to manage AI agent configs (Claude Code, Cursor, OpenCode, GitHub Copilot)
-from a single canonical store. Push to every agent, pull edits back, sync across
-machines via git. Store: `~/.friday/`. Default agent targets: `~/.claude`,
-`~/.cursor`, `~/.config/opencode`, `~/.github` (all configurable via
-`friday.yaml`).
+One CLI to manage AI agent configs (Claude Code, OpenAI Codex, OpenCode, GitHub
+Copilot) from a single canonical store. Push to every agent, pull edits back,
+sync across machines via git. Store: `~/.friday/`. Default agent targets:
+`~/.claude`, `~/.codex`, `~/.config/opencode`, `~/.copilot` (all configurable
+via `friday.yaml`).
+
+Cursor is intentionally not a built-in preset: its global rules are stored in
+Cursor's settings UI, not on the filesystem, so there's nothing for friday to
+write at user scope. See README for details.
 
 ## Build & test
 

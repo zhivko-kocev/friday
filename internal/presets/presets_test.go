@@ -23,7 +23,7 @@ func TestGetReturnsDeepCopy(t *testing.T) {
 
 func TestNamesIsSortedAndComplete(t *testing.T) {
 	names := Names()
-	want := []string{"claude", "copilot", "cursor", "opencode"}
+	want := []string{"claude", "codex", "copilot", "opencode"}
 	if !reflect.DeepEqual(names, want) {
 		t.Errorf("Names() = %v, want %v", names, want)
 	}

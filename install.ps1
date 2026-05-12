@@ -70,7 +70,7 @@ try {
     Write-Host ""
     Write-Host "  next steps:"
     Write-Host "    friday init                                  # scaffold a store, or clone an existing config repo"
-    Write-Host "    friday push                                  # apply config to ~/.claude, ~/.cursor, etc."
+    Write-Host "    friday push                                  # apply config to ~/.claude, ~/.codex, etc."
 }
 finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

@@ -6,7 +6,7 @@ func printUsage() {
 	fmt.Print(`friday — manage AI agent configs from a single canonical store
 
   Store:         ~/.friday — your .md files (identity, rules, agents, commands, skills)
-  Agents:        ~/.claude, ~/.cursor, ~/.config/opencode, ~/.github (Claude Code, Cursor, OpenCode, Copilot)
+  Agents:        ~/.claude, ~/.codex, ~/.config/opencode, ~/.copilot (Claude Code, OpenAI Codex, OpenCode, GitHub Copilot)
   Distribution:  any git remote — share with your team, your company, your other machines
 
 Usage:
@@ -46,7 +46,7 @@ Examples:
   friday push claude                             # push only to claude (creates target dir if missing)
 
   friday pull                                    # walk each installed agent: show diff, ask apply / skip / quit
-  friday pull cursor                             # legacy: pull cursor only, file-level conflicts
+  friday pull claude                             # legacy: pull claude only, file-level conflicts
 
   friday doctor                                  # diagnose store, manifest, drift in one read-only pass
   friday remote push -m "tweak rules"            # commit & push ~/.friday to its git remote

@@ -38,12 +38,23 @@ var registry = map[string]Preset{
 			{From: rules.FromSpec{"skills/**/*"}, To: "skills/{relpath}"},
 		},
 	},
-	"cursor": {
-		Name:   "cursor",
-		Target: ".cursor",
+	// Cursor user-level rules live inside Cursor's settings UI, not on the
+	// filesystem (see https://cursor.com/docs/rules). A user-level preset has
+	// nothing to write that Cursor would read; the project-level pattern
+	// (.cursor/rules/*.mdc) belongs to project scope, which friday does not
+	// support yet. Once Cursor ships filesystem-backed global rules, or
+	// friday gains project scope, this preset can come back.
+	"codex": {
+		Name: "codex",
+		// Codex CLI reads ~/.codex/AGENTS.md (and AGENTS.override.md if present).
+		// https://developers.openai.com/codex/guides/agents-md
+		Target: ".codex",
 		Rules: []*rules.Rule{
-			{From: rules.FromSpec{"identity.md"}, To: "rules/_identity.md"},
-			{From: rules.FromSpec{"rules/*.md"}, To: "rules/{filename}"},
+			{
+				From:     rules.FromSpec{"identity.md", "rules/*.md"},
+				To:       "AGENTS.md",
+				Strategy: rules.StrategyConcatenate,
+			},
 		},
 	},
 	"opencode": {
@@ -61,8 +72,11 @@ var registry = map[string]Preset{
 		},
 	},
 	"copilot": {
-		Name:   "copilot",
-		Target: ".github",
+		Name: "copilot",
+		// Copilot CLI reads ~/.copilot/copilot-instructions.md. VS Code Copilot
+		// honors the same path via chat.instructionsFilesLocations.
+		// https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions
+		Target: ".copilot",
 		Rules: []*rules.Rule{
 			{
 				From:     rules.FromSpec{"identity.md", "rules/*.md"},
