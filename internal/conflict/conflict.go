@@ -19,38 +19,69 @@ const (
 	ChoiceTake
 	// ChoiceSkip leaves both sides untouched.
 	ChoiceSkip
+	// ChoiceMerge writes 3-way-merged content; Prompt returns it alongside.
+	ChoiceMerge
 )
 
 // Prompt asks the user how to resolve a conflict between canonical and dest.
 // labelCanonical and labelDest describe the two sides for the diff view.
+// base is the last-synced content both sides diverged from; when non-nil the
+// prompt offers [m]erge and returns the merged bytes with ChoiceMerge.
 //
 // Returns ChoiceSkip on EOF or unrecognised input after retries.
-func Prompt(labelCanonical, labelDest string, canonical, dest []byte) Choice {
-	return promptIO(os.Stdin, os.Stdout, labelCanonical, labelDest, canonical, dest)
+func Prompt(labelCanonical, labelDest string, canonical, dest, base []byte) (Choice, []byte) {
+	return promptIO(os.Stdin, os.Stdout, labelCanonical, labelDest, canonical, dest, base)
 }
 
-func promptIO(in io.Reader, out io.Writer, labelCanonical, labelDest string, canonical, dest []byte) Choice {
+func promptIO(in io.Reader, out io.Writer, labelCanonical, labelDest string, canonical, dest, base []byte) (Choice, []byte) {
 	r := bufio.NewReader(in)
-	for attempts := 0; attempts < 5; attempts++ {
-		fmt.Fprintf(out, "  [k] keep canonical   [t] use target   [d] show diff   [s] skip\n  > ")
+	options := "  [k] keep canonical   [t] use target   [d] show diff   [s] skip"
+	if base != nil {
+		options = "  [k] keep canonical   [t] use target   [m] merge   [d] show diff   [s] skip"
+	}
+	for range 5 {
+		fmt.Fprintf(out, "%s\n  > ", options)
 		line, err := r.ReadString('\n')
 		if err != nil && line == "" {
-			return ChoiceSkip
+			return ChoiceSkip, nil
 		}
 		switch strings.ToLower(strings.TrimSpace(line)) {
 		case "k", "keep":
-			return ChoiceKeep
+			return ChoiceKeep, nil
 		case "t", "take", "target":
-			return ChoiceTake
+			return ChoiceTake, nil
 		case "s", "skip", "":
-			return ChoiceSkip
+			return ChoiceSkip, nil
+		case "m", "merge":
+			if base == nil {
+				fmt.Fprintf(out, "  no merge base available for this file\n")
+				continue
+			}
+			merged, clean := Merge(base, canonical, dest, labelCanonical, labelDest)
+			if clean {
+				fmt.Fprintf(out, "  merged cleanly\n")
+				return ChoiceMerge, merged
+			}
+			if promptYes(r, out, "  edits overlap — write with conflict markers? [y/N] > ") {
+				return ChoiceMerge, merged
+			}
 		case "d", "diff":
 			renderDiff(out, labelCanonical, labelDest, canonical, dest)
 		default:
-			fmt.Fprintf(out, "  unrecognised choice; expected k/t/d/s\n")
+			fmt.Fprintf(out, "  unrecognised choice; expected k/t/m/d/s\n")
 		}
 	}
-	return ChoiceSkip
+	return ChoiceSkip, nil
+}
+
+func promptYes(r *bufio.Reader, out io.Writer, msg string) bool {
+	fmt.Fprint(out, msg)
+	line, err := r.ReadString('\n')
+	if err != nil && line == "" {
+		return false
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes"
 }
 
 func renderDiff(out io.Writer, labelA, labelB string, a, b []byte) {
@@ -81,9 +112,9 @@ func splitLines(s string) []string {
 	return lines
 }
 
-// lcsDiff produces a simple line-by-line diff using LCS. Output lines are
-// prefixed with " ", "-", or "+".
-func lcsDiff(a, b []string) []string {
+// lcsTable builds the suffix LCS-length table shared by lcsDiff and
+// lcsPairs (merge.go).
+func lcsTable(a, b []string) [][]int {
 	la, lb := len(a), len(b)
 	dp := make([][]int, la+1)
 	for i := range dp {
@@ -100,6 +131,14 @@ func lcsDiff(a, b []string) []string {
 			}
 		}
 	}
+	return dp
+}
+
+// lcsDiff produces a simple line-by-line diff using LCS. Output lines are
+// prefixed with " ", "-", or "+".
+func lcsDiff(a, b []string) []string {
+	la, lb := len(a), len(b)
+	dp := lcsTable(a, b)
 	var out []string
 	i, j := 0, 0
 	for i < la && j < lb {
