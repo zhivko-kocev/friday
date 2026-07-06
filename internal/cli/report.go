@@ -139,6 +139,9 @@ func formatLine(ch engine.Change, dryRun bool) string {
 	if ch.Reason != "" {
 		parts = append(parts, "("+ch.Reason+")")
 	}
+	if ch.Warning != "" {
+		parts = append(parts, "(warning: "+ch.Warning+")")
+	}
 	return strings.Join(parts, "  ")
 }
 

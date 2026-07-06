@@ -53,6 +53,11 @@ func (t Tokens) Expand(template string) string {
 	return r.Replace(template)
 }
 
+// HasToken reports whether a `to` template contains any substitution token.
+// Literal templates behave differently in several places (missing-source
+// reporting, inversion), so callers need the distinction.
+func HasToken(template string) bool { return hasToken(template) }
+
 func hasToken(s string) bool {
 	for _, tok := range []string{"{filename}", "{stem}", "{ext}", "{relpath}", "{dir}"} {
 		if strings.Contains(s, tok) {

@@ -1,6 +1,9 @@
 package conflict
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Merge performs a line-based 3-way merge of ours and theirs against their
 // common base. Non-overlapping edits combine cleanly; overlapping hunks get
@@ -23,11 +26,11 @@ func Merge(base, ours, theirs []byte, labelOurs, labelTheirs string) (merged []b
 		oo := o[prev[1]+1 : a[1]]
 		to := th[prev[2]+1 : a[2]]
 		switch {
-		case eqLines(oo, bo):
+		case slices.Equal(oo, bo):
 			out = append(out, to...) // only theirs changed
-		case eqLines(to, bo):
+		case slices.Equal(to, bo):
 			out = append(out, oo...) // only ours changed
-		case eqLines(oo, to):
+		case slices.Equal(oo, to):
 			out = append(out, oo...) // both made the same change
 		default:
 			clean = false
@@ -66,6 +69,11 @@ func commonAnchors(b, o, t []string) [][3]int {
 	return anchors
 }
 
+// LCSPairs maps a-indices to b-indices along one longest common subsequence
+// of two line slices. The engine uses it to tell edited lines from unchanged
+// ones when inverting a pull.
+func LCSPairs(a, b []string) map[int]int { return lcsPairs(a, b) }
+
 // lcsPairs maps a-indices to b-indices along one longest common subsequence.
 func lcsPairs(a, b []string) map[int]int {
 	dp := lcsTable(a, b)
@@ -84,16 +92,4 @@ func lcsPairs(a, b []string) map[int]int {
 		}
 	}
 	return pairs
-}
-
-func eqLines(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

@@ -36,7 +36,8 @@ func promoteFlags(o *promoteOpts) *flag.FlagSet {
 func cmdPromote(args []string) int {
 	var o promoteOpts
 	fs := promoteFlags(&o)
-	if err := fs.Parse(args); err != nil {
+	filters, err := parseInterleaved(fs, args)
+	if err != nil {
 		return 1
 	}
 	if o.propose && o.message == "" {
@@ -58,11 +59,14 @@ func cmdPromote(args []string) int {
 		Agent:   o.agent,
 		DryRun:  o.dryRun,
 		Force:   o.force,
-		Filters: fs.Args(),
+		Filters: filters,
 	}, resolver)
 	if err != nil {
 		output.Err("%v", err)
 		return 1
+	}
+	if !o.dryRun {
+		recordSnapshot(changes)
 	}
 	report(changes, false, o.dryRun)
 

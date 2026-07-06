@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/zhivko-kocev/friday/internal/config"
@@ -346,5 +347,203 @@ func TestConflictInfoCarriesBaseContent(t *testing.T) {
 	}
 	if string(gotBase) != "v1" {
 		t.Errorf("BaseContent = %q, want the last-synced v1", gotBase)
+	}
+}
+
+func TestPullSkipsWhenTargetMatchesBaseline(t *testing.T) {
+	// Store edited, target untouched since the last push: pull has nothing
+	// to capture and must not overwrite the newer store — even under force.
+	storeAbs, _, cfg := driftHarness(t)
+	if err := os.WriteFile(filepath.Join(storeAbs, "a.md"), []byte("store-edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, force := range []bool{false, true} {
+		got, err := Pull(cfg, Options{Force: force})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].Action != ActionInSync {
+			t.Fatalf("force=%v: got %+v, want InSync (store is newer)", force, got)
+		}
+		data, _ := os.ReadFile(filepath.Join(storeAbs, "a.md"))
+		if string(data) != "store-edit" {
+			t.Fatalf("force=%v: pull overwrote the newer store: %q", force, data)
+		}
+	}
+}
+
+func TestPushMergeWritesBackToStore(t *testing.T) {
+	storeAbs, targetAbs, cfg := driftHarness(t)
+	if err := os.WriteFile(filepath.Join(targetAbs, "a.md"), []byte("target-edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storeAbs, "a.md"), []byte("canonical-edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolver := func(ConflictInfo) Resolution {
+		return Resolution{Choice: ConflictUseMerged, Content: []byte("merged-content")}
+	}
+	if _, err := Push(cfg, Options{OnConflict: resolver}); err != nil {
+		t.Fatal(err)
+	}
+	// The merge must reach the store too; otherwise the next push plans from
+	// the old store content and silently reverts it.
+	data, _ := os.ReadFile(filepath.Join(storeAbs, "a.md"))
+	if string(data) != "merged-content" {
+		t.Fatalf("store = %q, want the merged content", data)
+	}
+	got, err := Push(cfg, Options{}) // nil resolver — must be a clean no-op
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Action != ActionInSync {
+		t.Errorf("post-merge push = %v, want InSync (both sides converged)", got[0].Action)
+	}
+	tdata, _ := os.ReadFile(filepath.Join(targetAbs, "a.md"))
+	if string(tdata) != "merged-content" {
+		t.Errorf("second push reverted the merge: target = %q", tdata)
+	}
+}
+
+func TestPushMergeOnConcatenateKeepsPromptAndWarns(t *testing.T) {
+	// Concatenate rules can't route a merge back into their (multi-file)
+	// sources. The merge lands in the target, but the old baseline is kept
+	// so the next push re-prompts instead of silently reverting it.
+	storeAbs, targetAbs := scaffold(t, map[string]string{"a.md": "v1"})
+	cfg := &config.Config{
+		Version:    1,
+		StoreDir:   storeAbs,
+		TargetRoot: targetAbs,
+		Adapters: map[string]*config.Adapter{
+			"test": {Target: targetAbs, Rules: []*rules.Rule{
+				{From: rules.FromSpec{"a.md"}, To: "out.md", Strategy: rules.StrategyConcatenate},
+			}},
+		},
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if runtime.GOOS == "windows" {
+		t.Setenv("LocalAppData", t.TempDir())
+	}
+	if _, err := Push(cfg, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetAbs, "out.md"), []byte("target-edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storeAbs, "a.md"), []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolver := func(ConflictInfo) Resolution {
+		return Resolution{Choice: ConflictUseMerged, Content: []byte("merged-content")}
+	}
+	got, err := Push(cfg, Options{OnConflict: resolver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Warning == "" {
+		t.Error("no warning that the store still holds the old content")
+	}
+	data, _ := os.ReadFile(filepath.Join(targetAbs, "out.md"))
+	if string(data) != "merged-content" {
+		t.Fatalf("target = %q", data)
+	}
+	// Next push must NOT silently revert the merge.
+	got, err = Push(cfg, Options{}) // nil resolver → drift surfaces as conflict
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Action != ActionConflict {
+		t.Errorf("post-merge push = %v, want Conflict (merge must not be silently reverted)", got[0].Action)
+	}
+	data, _ = os.ReadFile(filepath.Join(targetAbs, "out.md"))
+	if string(data) != "merged-content" {
+		t.Errorf("second push reverted the merge: %q", data)
+	}
+}
+
+func TestInSyncRunHealsMissingBaselines(t *testing.T) {
+	// A store upgraded from a pre-baseline friday is fully in sync but has
+	// no recorded baselines. The first in-sync run must record them —
+	// otherwise every later target edit reads as an unresolvable conflict
+	// in non-interactive pulls.
+	storeAbs, targetAbs := scaffold(t, map[string]string{"a.md": "v1"})
+	if err := os.WriteFile(filepath.Join(targetAbs, "a.md"), []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Version:    1,
+		StoreDir:   storeAbs,
+		TargetRoot: targetAbs,
+		Adapters: map[string]*config.Adapter{
+			"test": {Target: targetAbs, Rules: []*rules.Rule{{From: rules.FromSpec{"a.md"}, To: "a.md", Strategy: rules.StrategyCopy}}},
+		},
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if runtime.GOOS == "windows" {
+		t.Setenv("LocalAppData", t.TempDir())
+	}
+	got, err := Push(cfg, Options{}) // in-sync: writes nothing, heals baselines
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Action != ActionInSync {
+		t.Fatalf("got %v, want InSync", got[0].Action)
+	}
+	// Target edit + non-interactive pull: with the healed canonical baseline
+	// this is a plain capture, not a conflict.
+	if err := os.WriteFile(filepath.Join(targetAbs, "a.md"), []byte("target-edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err = Pull(cfg, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Action != ActionUpdate {
+		t.Fatalf("pull after heal = %v (%s), want Update", got[0].Action, got[0].Reason)
+	}
+	data, _ := os.ReadFile(filepath.Join(storeAbs, "a.md"))
+	if string(data) != "target-edit" {
+		t.Errorf("store = %q", data)
+	}
+}
+
+func TestMaxBytesWarningSurvivesConflict(t *testing.T) {
+	storeAbs, targetAbs := scaffold(t, map[string]string{"a.md": strings.Repeat("x", 100)})
+	cfg := &config.Config{
+		Version:    1,
+		StoreDir:   storeAbs,
+		TargetRoot: targetAbs,
+		Adapters: map[string]*config.Adapter{
+			"test": {Target: targetAbs, Rules: []*rules.Rule{
+				{From: rules.FromSpec{"a.md"}, To: "out.md", Strategy: rules.StrategyConcatenate, MaxBytes: 50},
+			}},
+		},
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if runtime.GOOS == "windows" {
+		t.Setenv("LocalAppData", t.TempDir())
+	}
+	if _, err := Push(cfg, Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	// Drift the target and change the store so the next push conflicts.
+	if err := os.WriteFile(filepath.Join(targetAbs, "out.md"), []byte("target-edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storeAbs, "a.md"), []byte(strings.Repeat("y", 100)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Push(cfg, Options{}) // nil resolver → conflict
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Action != ActionConflict {
+		t.Fatalf("got %v, want Conflict", got[0].Action)
+	}
+	if !strings.Contains(got[0].Warning, "exceeds") {
+		t.Errorf("Warning = %q — the max_bytes advisory was lost in conflict resolution", got[0].Warning)
 	}
 }

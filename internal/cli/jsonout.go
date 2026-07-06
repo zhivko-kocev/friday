@@ -28,6 +28,7 @@ type changeJSON struct {
 	Sources []string `json:"sources,omitempty"`
 	Dest    string   `json:"dest,omitempty"`
 	Reason  string   `json:"reason,omitempty"`
+	Warning string   `json:"warning,omitempty"`
 }
 
 // buildStatusJSON is a pure function so tests assert on the struct instead
@@ -46,6 +47,7 @@ func buildStatusJSON(cfg *config.Config, changes []engine.Change) statusJSON {
 			Sources: ch.Sources,
 			Dest:    ch.DestRel,
 			Reason:  ch.Reason,
+			Warning: ch.Warning,
 		})
 		switch ch.Action {
 		case engine.ActionCreate:

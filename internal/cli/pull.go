@@ -32,7 +32,8 @@ func pullFlags(o *pullOpts) *flag.FlagSet {
 func cmdPull(args []string) int {
 	var o pullOpts
 	fs := pullFlags(&o)
-	if err := fs.Parse(args); err != nil {
+	adapters, err := parseInterleaved(fs, args)
+	if err != nil {
 		return 1
 	}
 
@@ -43,27 +44,25 @@ func cmdPull(args []string) int {
 	}
 
 	if o.noInteractive {
-		return pullBatch(cfg, fs.Args(), o.dryRun, o.force, false)
+		return pullBatch(cfg, adapters, o.dryRun, o.force)
 	}
-	return pullPerAdapter(cfg, fs.Args(), o.dryRun, o.force)
+	return pullPerAdapter(cfg, adapters, o.dryRun, o.force)
 }
 
 // pullBatch is the legacy single-pass flow, kept for `--no-interactive`
 // (CI / scripts) where per-adapter prompting makes no sense.
-func pullBatch(cfg *config.Config, adapters []string, dryRun, force, interactive bool) int {
-	opts := engine.Options{
+func pullBatch(cfg *config.Config, adapters []string, dryRun, force bool) int {
+	changes, err := engine.Pull(cfg, engine.Options{
 		Adapters: adapters,
 		DryRun:   dryRun,
 		Force:    force,
-	}
-	if interactive {
-		opts.OnConflict = interactiveResolver()
-		opts.BaseLookup = baseLookup()
-	}
-	changes, err := engine.Pull(cfg, opts)
+	})
 	if err != nil {
 		output.Err("%v", err)
 		return 1
+	}
+	if !dryRun {
+		recordSnapshot(changes)
 	}
 	report(changes, false, dryRun)
 	return exitCode(changes)
@@ -120,6 +119,7 @@ func pullPerAdapter(cfg *config.Config, adapters []string, dryRun, force bool) i
 		case "a":
 			applied, err := engine.Pull(cfg, engine.Options{
 				Adapters:   []string{name},
+				Force:      force,
 				OnConflict: interactiveResolver(),
 				BaseLookup: baseLookup(),
 			})
@@ -127,6 +127,7 @@ func pullPerAdapter(cfg *config.Config, adapters []string, dryRun, force bool) i
 				output.Err("apply %s: %v", name, err)
 				return 1
 			}
+			recordSnapshot(applied)
 			output.OK("applied %s", name)
 			seen = append(seen, applied...)
 		case "s":
@@ -134,6 +135,11 @@ func pullPerAdapter(cfg *config.Config, adapters []string, dryRun, force bool) i
 		case "q":
 			output.Dim("quit")
 			return exitCode(seen)
+		case "eof":
+			// Piped/closed stdin mid-flow: nothing was (or will be) applied.
+			// Exit non-zero so scripts don't read the silence as success.
+			output.Warn("stdin closed — nothing applied; use --no-interactive or --force for scripts")
+			return 2
 		}
 	}
 	return exitCode(seen)
@@ -152,14 +158,15 @@ func hasPullWork(changes []engine.Change) bool {
 	return false
 }
 
-// promptApplyChoice reads one of a/s/q from the user. Anything else (or EOF)
-// is treated as quit so a piped stdin doesn't accidentally apply edits.
+// promptApplyChoice reads one of a/s/q from the user. EOF returns the
+// distinct "eof" choice so the caller can exit non-zero — a piped stdin must
+// neither apply edits nor masquerade as a clean quit.
 func promptApplyChoice(r *bufio.Reader) string {
 	for range 5 {
 		fmt.Print("  [a]pply  [s]kip  [q]uit > ")
 		line, err := r.ReadString('\n')
 		if err != nil {
-			return "q"
+			return "eof"
 		}
 		switch strings.ToLower(strings.TrimSpace(line)) {
 		case "a", "apply", "y", "yes":

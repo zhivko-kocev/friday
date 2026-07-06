@@ -35,10 +35,15 @@ func Prompt(labelCanonical, labelDest string, canonical, dest, base []byte) (Cho
 
 func promptIO(in io.Reader, out io.Writer, labelCanonical, labelDest string, canonical, dest, base []byte) (Choice, []byte) {
 	r := bufio.NewReader(in)
-	options := "  [k] keep canonical   [t] use target   [d] show diff   [s] skip"
+	// Worded from the labels so the menu stays truthful in both directions:
+	// on pull the incoming (canonical) side is the target and the dest is
+	// the store — a hardcoded "keep canonical [k]" would promise the exact
+	// opposite of what ChoiceKeep does there.
+	merge := ""
 	if base != nil {
-		options = "  [k] keep canonical   [t] use target   [m] merge   [d] show diff   [s] skip"
+		merge = "[m] merge   "
 	}
+	options := fmt.Sprintf("  [k] keep %s   [t] use %s   %s[d] show diff   [s] skip", labelCanonical, labelDest, merge)
 	for range 5 {
 		fmt.Fprintf(out, "%s\n  > ", options)
 		line, err := r.ReadString('\n')

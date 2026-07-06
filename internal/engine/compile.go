@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/zhivko-kocev/friday/internal/config"
@@ -41,11 +42,16 @@ func Compile(cfg *config.Config, from, to string, allowLossy bool, opts Options)
 	defer os.RemoveAll(tmp)
 
 	res := &CompileResult{}
+	// Every phase runs against a throwaway drift state. Compile reads the
+	// from-adapter's real target dir, and recording those files in the real
+	// drift store would re-baseline them to their current content — silently
+	// disarming the conflict prompt on the next real push.
+	driftPath := filepath.Join(tmp, "drift-state.json")
 
 	// Phase 1 — extract: materialize the from-adapter's target into the temp
 	// store. The store is empty, so no conflicts are possible.
 	cfgFrom := config.NewDefault(cfg.Scope, tmp, cfg.TargetRoot, map[string]*config.Adapter{from: cfg.Adapters[from]})
-	res.Extracted, err = Import(cfgFrom, Options{})
+	res.Extracted, err = Import(cfgFrom, Options{driftPath: driftPath})
 	if err != nil {
 		return nil, fmt.Errorf("extract %s: %w", from, err)
 	}
@@ -62,7 +68,7 @@ func Compile(cfg *config.Config, from, to string, allowLossy bool, opts Options)
 	// Phase 2 — lossiness check: anything extracted that the to-adapter's
 	// push plan doesn't consume would silently vanish in the conversion.
 	cfgTo := config.NewDefault(cfg.Scope, tmp, cfg.TargetRoot, map[string]*config.Adapter{to: cfg.Adapters[to]})
-	planned, err := Push(cfgTo, Options{DryRun: true})
+	planned, err := Push(cfgTo, Options{DryRun: true, driftPath: driftPath})
 	if err != nil {
 		return nil, fmt.Errorf("plan %s: %w", to, err)
 	}
@@ -85,13 +91,16 @@ func Compile(cfg *config.Config, from, to string, allowLossy bool, opts Options)
 		return res, nil
 	}
 
-	// Phase 3 — emit for real (or dry-run). Drift baselines are recorded for
-	// the written files, so a later `friday push` prompts instead of
-	// silently clobbering compiled output.
+	// Phase 3 — emit for real (or dry-run). Still on the throwaway drift
+	// state: compiled output deliberately gets NO real baselines, so a later
+	// `friday push` sees it as foreign and prompts instead of silently
+	// clobbering it. Existing target files likewise read as drifted here,
+	// which routes every overwrite through the conflict prompt (or --force).
 	res.Emitted, err = Push(cfgTo, Options{
 		DryRun:     opts.DryRun,
 		Force:      opts.Force,
 		OnConflict: opts.OnConflict,
+		driftPath:  driftPath,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("emit %s: %w", to, err)

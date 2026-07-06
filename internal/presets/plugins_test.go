@@ -3,6 +3,8 @@ package presets
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -71,5 +73,37 @@ func TestAllAdaptersWithOverlaysBuiltins(t *testing.T) {
 	}
 	if _, ok := all["claude"]; !ok {
 		t.Error("built-ins missing from overlay")
+	}
+}
+
+func TestLoadPluginsLabelsProjectRuleErrors(t *testing.T) {
+	store := t.TempDir()
+	writePlugin(t, store, "bad.yaml",
+		"target: .x\nrules:\n  - from: a.md\n    to: A.md\nproject_rules:\n  - from: b.md\n    to: \"\"\n")
+	_, errs := LoadPlugins(store)
+	if len(errs) != 1 {
+		t.Fatalf("errs = %v, want one", errs)
+	}
+	if !strings.Contains(errs[0].Error(), "project_rule[0]") {
+		t.Errorf("err = %v, want it labeled project_rule[0], not a merged rule index", errs[0])
+	}
+}
+
+func TestGetWithResolvesPluginPresets(t *testing.T) {
+	store := t.TempDir()
+	writePlugin(t, store, "aider.yaml", "target: .aider\nrules:\n  - from: core.md\n    to: CONVENTIONS.md\n")
+	p, ok := GetWith(store, "aider")
+	if !ok || p.Target != ".aider" {
+		t.Fatalf("GetWith(aider) = %+v, %v — plugin presets must be visible to setup/promote", p, ok)
+	}
+	if _, ok := GetWith(store, "claude"); !ok {
+		t.Error("GetWith must still resolve built-ins")
+	}
+	names := NamesWith(store)
+	if !slices.Contains(names, "aider") || !slices.Contains(names, "claude") {
+		t.Errorf("NamesWith = %v, want plugins and built-ins", names)
+	}
+	if !slices.IsSorted(names) {
+		t.Errorf("NamesWith not sorted: %v", names)
 	}
 }

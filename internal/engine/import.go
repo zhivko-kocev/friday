@@ -53,12 +53,12 @@ func planImport(adapterName string, ad *config.Adapter, storeAbs, targetAbs stri
 		if err != nil {
 			return nil, fmt.Errorf("expand %q against target: %w", glob, err)
 		}
-		anchor := rules.Anchor(r.From[0])
 		for _, m := range matches {
 			var storeRel string
 			if glob == r.To { // literal template: one file, maps to the from-pattern
 				storeRel = literalStoreDest(r.From, storeAbs)
-			} else if storeRel, ok = rules.Invert(r.To, m, anchor); !ok {
+			} else if storeRel = invertToFrom(r, m); storeRel == "" {
+				skip(ri, m, "matches the rule's target glob but no from-pattern maps it into the store")
 				continue
 			}
 			ch, err := planImportFile(adapterName, r, storeAbs, targetAbs, storeRel, m)
@@ -70,6 +70,21 @@ func planImport(adapterName string, ad *config.Adapter, storeAbs, targetAbs stri
 		}
 	}
 	return out, nil
+}
+
+// invertToFrom maps a target file back to the store path of the first
+// from-pattern that accepts it. Inversion must run at the same granularity
+// as expansion: every pattern has its own anchor, and a file no pattern
+// matches has no store home — importing it anyway would create an orphan
+// that push never consumes, breaking the push/import round trip.
+func invertToFrom(r *rules.Rule, targetRel string) string {
+	for _, pat := range r.From {
+		storeRel, ok := rules.Invert(r.To, targetRel, rules.Anchor(pat))
+		if ok && rules.Match(pat, storeRel) {
+			return storeRel
+		}
+	}
+	return ""
 }
 
 // literalStoreDest picks where a literal-template rule's file lands in the
@@ -100,7 +115,6 @@ func planImportFile(adapterName string, r *rules.Rule, storeAbs, targetAbs, stor
 	if err != nil {
 		return Change{}, fmt.Errorf("read %s: %w", targetAbsFile, err)
 	}
-	content := r.ApplyReplaceInverse(raw)
 
 	ch := Change{
 		Adapter:    adapterName,
@@ -110,21 +124,27 @@ func planImportFile(adapterName string, r *rules.Rule, storeAbs, targetAbs, stor
 		SrcContent: raw,
 		DestPath:   storeAbsFile,
 		DestRel:    storeRel,
-		NewContent: content,
 		Mode:       info.Mode().Perm(),
 	}
 	old, err := os.ReadFile(storeAbsFile)
 	switch {
 	case os.IsNotExist(err):
 		ch.Action = ActionCreate
+		ch.NewContent = r.ApplyReplaceInverse(raw)
 	case err != nil:
 		return ch, fmt.Errorf("read %s: %w", storeAbsFile, err)
 	default:
 		ch.OldContent = old
-		if equalNormalized(old, content) {
+		// Compare in target-space, like planPull: inverting the target
+		// instead would flag natural occurrences of replace values in the
+		// store as phantom edits — and a forced import (eject) would then
+		// rewrite them in place.
+		if equalNormalized(raw, r.ApplyReplace(old)) {
 			ch.Action = ActionInSync
+			ch.NewContent = old
 		} else {
 			ch.Action = ActionUpdate
+			ch.NewContent = pullContent(r, old, raw)
 		}
 	}
 	return ch, nil

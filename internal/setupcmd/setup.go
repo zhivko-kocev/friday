@@ -55,7 +55,7 @@ var catalogSpecs = []struct{ category, glob string }{
 // Catalog enumerates what the store offers, in stable display order.
 func Catalog(storeDir string) ([]Item, error) {
 	var items []Item
-	for _, v := range []string{"core.md", "core/core.md", "identity.md"} {
+	for _, v := range presets.EntryFiles {
 		matches, err := rules.Expand(storeDir, v)
 		if err != nil {
 			return nil, err
@@ -171,13 +171,15 @@ func Run(prompt io.Reader, cwd string, opts Options, onConflict engine.ConflictR
 
 	agent := opts.Agent
 	if agent == "" {
-		if agent, err = chooseAgent(reader); err != nil {
+		if agent, err = chooseAgent(reader, presets.NamesWith(storeDir)); err != nil {
 			return nil, err
 		}
 	}
-	preset, ok := presets.Get(agent)
+	// GetWith, not Get: plugin presets must be as usable here as they are
+	// for push and pull.
+	preset, ok := presets.GetWith(storeDir, agent)
 	if !ok {
-		return nil, fmt.Errorf("unknown agent %q (available: %s)", agent, strings.Join(presets.Names(), ", "))
+		return nil, fmt.Errorf("unknown agent %q (available: %s)", agent, strings.Join(presets.NamesWith(storeDir), ", "))
 	}
 	if len(preset.ProjectRules) == 0 {
 		return nil, fmt.Errorf("preset %q has no project-scope mapping", agent)
@@ -241,13 +243,13 @@ func Promote(prompt io.Reader, cwd string, opts PromoteOptions, onConflict engin
 
 	agent := opts.Agent
 	if agent == "" {
-		if agent, err = chooseAgent(bufio.NewReader(prompt)); err != nil {
+		if agent, err = chooseAgent(bufio.NewReader(prompt), presets.NamesWith(storeDir)); err != nil {
 			return nil, err
 		}
 	}
-	preset, ok := presets.Get(agent)
+	preset, ok := presets.GetWith(storeDir, agent)
 	if !ok {
-		return nil, fmt.Errorf("unknown agent %q (available: %s)", agent, strings.Join(presets.Names(), ", "))
+		return nil, fmt.Errorf("unknown agent %q (available: %s)", agent, strings.Join(presets.NamesWith(storeDir), ", "))
 	}
 	if len(preset.ProjectRules) == 0 {
 		return nil, fmt.Errorf("preset %q has no project-scope mapping", agent)
@@ -315,8 +317,7 @@ func itemCoversAnySource(it Item, sources []string) bool {
 	return false
 }
 
-func chooseAgent(reader *bufio.Reader) (string, error) {
-	names := presets.Names()
+func chooseAgent(reader *bufio.Reader, names []string) (string, error) {
 	output.Info("Which agent will this project use?")
 	for i, n := range names {
 		fmt.Printf("  %d) %s\n", i+1, n)

@@ -2,6 +2,33 @@
 
 All notable changes to friday are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-07-06
+
+Hardening release: an adversarial review of v0.1.0/v0.2.0 surfaced 21 confirmed defects — most of them silent-data-loss paths in the drift/baseline machinery — all fixed here with regression tests.
+
+### Fixed
+- **Pull conflict prompt acted inverted.** The menu was hardcoded for the push direction, so on pull "[k] keep canonical" wrote the incoming target over the store and "[t] use target" kept the store. The menu is now worded per direction (`[k] keep target   [t] use store` on pull).
+- **Pull could overwrite a newer store with stale target content** (e.g. after editing `~/.friday` and running a project-scope `friday setup`, or pushing to one agent then pulling another). Pull now checks the target's own baseline first: a target unchanged since friday last wrote it has nothing to capture and is reported in-sync — even under `--force`.
+- **A push-direction 3-way merge was silently reverted by the next push.** Merges on copy rules are now written back to the store file too, so both sides converge; on concatenate/frontmatter-strip rules the old baseline is kept so the next push re-prompts instead of reverting, plus a warning.
+- **`friday compile` disarmed drift protection.** Its import phase recorded the from-adapter's current target files (hand edits included) as baselines in the real drift state — even under `--dry-run` — so the next push overwrote hand edits without prompting. Compile now runs entirely on a throwaway drift state.
+- **`friday import` / `friday eject` corrupted stores containing a replace value naturally.** Import compared in store-space, so a literal `~/.friday` in store prose read as a phantom edit that a forced import rewrote to `${CLAUDE_PLUGIN_ROOT}`. Import now compares in target-space, like pull.
+- **Pull updates no longer rewrite natural replace-value occurrences.** The textual inverse now applies only to lines the target actually changed; unchanged lines keep their original store form (LCS alignment against the pushed rendering).
+- **`friday pull --force` / `friday sync --force` still prompted interactively** — the force flag was never forwarded to the apply-phase engine call. In scripts (piped stdin) every conflict was silently skipped while the run claimed success.
+- **In-sync stores never acquired baselines**, so a store upgraded from v0.0.4 hit an unresolvable conflict on every non-interactive pull after the first target edit. In-sync runs now record missing baselines (steady-state runs still skip the state write).
+- **The legacy `identity.md` beat `core.md`** when a store carried both: literal-template copy rules planned every variant and the last write won. The from-list is most-preferred first; the first variant now wins, on push and on pull.
+- **`friday promote <path> --propose -m "..."` (the documented invocation) silently skipped the MR** — stdlib flag parsing stops at the first positional, turning trailing flags into path filters. All commands taking positionals (promote, push, pull, sync, import) now parse flags anywhere on the line (`--` still terminates flags).
+- **The `max_bytes` warning was lost whenever the oversized file had also drifted** — conflict resolution overwrote the same field. Warnings now ride a dedicated field, survive resolution, and appear in `--json` output.
+- **Plugin presets were invisible to `friday setup` / `friday promote`**, and a plugin's `project_target`/`project_rules` were parsed but unreachable. Both commands now resolve plugins exactly like push/pull (plugins may shadow built-ins).
+- **A typo'd from-pattern was silently absorbed** when any sibling pattern matched. Tokenized templates now report `missing-source` per pattern; literal templates (alternative-spelling lists) still report per rule.
+- **Import inverted every file under the first from-pattern's anchor** and imported files no pattern accepts, creating store orphans push never consumes. Inversion now runs per pattern, and unmapped files are reported as skipped.
+- Plugin validation errors on `project_rules` were labeled with a merged `rule[N]` index pointing at a nonexistent entry; they now read `project_rule[N]`.
+
+### Changed
+- `friday rollback` now covers every write-capable command — pull, sync, setup, promote, import, and compile record snapshots, not just push.
+- `friday pull <adapter>` with closed/piped stdin exits 2 with a hint (`--no-interactive` / `--force`) instead of exiting 0 having applied nothing.
+- `friday compile` prompts (or requires `--force`) when overwriting existing files in the to-adapter's target, and compiled output deliberately carries no baselines so a later real `friday push` prompts instead of silently clobbering it.
+- Internal: the entry-file variant list is defined once (`presets.EntryFiles`) and consumed by setup and doctor; the `${CLAUDE_PLUGIN_ROOT}` rewrite is stamped onto every built-in rule centrally instead of repeated per rule.
+
 ## [0.2.0] — 2026-07-06
 
 The capability-matrix release: every store directory maps into every agent that has a documented place for it.
@@ -93,7 +120,9 @@ First open-source-ready cut. Bug fixes, new commands, and a full set of communit
 - Interactive conflict resolver with line-LCS diff.
 - Cross-platform: Linux, macOS, Windows.
 
-[Unreleased]: https://github.com/zhivko-kocev/friday/compare/v0.0.4...HEAD
+[0.2.1]: https://github.com/zhivko-kocev/friday/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/zhivko-kocev/friday/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/zhivko-kocev/friday/compare/v0.0.4...v0.1.0
 [0.0.4]: https://github.com/zhivko-kocev/friday/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/zhivko-kocev/friday/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/zhivko-kocev/friday/compare/v0.0.1...v0.0.2

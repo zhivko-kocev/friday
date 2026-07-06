@@ -100,3 +100,16 @@ func TestAllAdaptersHasEveryPreset(t *testing.T) {
 		}
 	}
 }
+
+func TestGetStampsDefaultReplaceOnEveryRule(t *testing.T) {
+	// The registry stays pure layout data; the store-wide marker rewrite is
+	// stamped by Get so a newly added rule can't silently ship without it.
+	for _, name := range Names() {
+		p, _ := Get(name)
+		for i, r := range append(p.Rules, p.ProjectRules...) {
+			if r.Replace["${CLAUDE_PLUGIN_ROOT}"] != "~/.friday" {
+				t.Errorf("%s: rule %d (%s) missing the stamped default replace", name, i, r.To)
+			}
+		}
+	}
+}

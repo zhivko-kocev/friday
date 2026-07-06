@@ -109,3 +109,53 @@ func TestCompileValidatesAdapters(t *testing.T) {
 		t.Error("unknown adapter accepted")
 	}
 }
+
+func TestCompileLeavesRealDriftStateUntouched(t *testing.T) {
+	// Compile reads the from-adapter's real target dir. If its import phase
+	// recorded those files in the real drift store, a hand-edited target
+	// would be re-baselined to its edited content and the next real push
+	// would overwrite it without a prompt.
+	root := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	storeAbs := filepath.Join(root, "store")
+	fromTarget := filepath.Join(root, "dot-claude")
+	toTarget := filepath.Join(root, "dot-open")
+	populateTarget(t, storeAbs, map[string]string{"agents/a.md": "v1"})
+	if err := os.MkdirAll(toTarget, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rule := []*rules.Rule{{From: rules.FromSpec{"agents/*.md"}, To: "agents/{filename}"}}
+	cfg := config.NewDefault(config.ScopeUser, storeAbs, root, map[string]*config.Adapter{
+		"claudeish": {Target: fromTarget, Rules: rule},
+		"openish":   {Target: toTarget, Rules: rule},
+	})
+
+	// Real push seeds the baseline, then the user hand-edits the target.
+	if _, err := Push(cfg, Options{Adapters: []string{"claudeish"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fromTarget, "agents", "a.md"), []byte("hand-edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Compile(cfg, "claudeish", "openish", true, Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The pending drift must still be detected: push with no resolver has to
+	// surface the hand-edit as a conflict, not overwrite it.
+	got, err := Push(cfg, Options{Adapters: []string{"claudeish"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Action != ActionConflict {
+		t.Errorf("post-compile push = %v, want Conflict — compile re-baselined the real drift state", got[0].Action)
+	}
+	data, _ := os.ReadFile(filepath.Join(fromTarget, "agents", "a.md"))
+	if string(data) != "hand-edit" {
+		t.Errorf("hand edit overwritten: %q", data)
+	}
+}

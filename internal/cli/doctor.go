@@ -11,6 +11,7 @@ import (
 	"github.com/zhivko-kocev/friday/internal/engine"
 	"github.com/zhivko-kocev/friday/internal/git"
 	"github.com/zhivko-kocev/friday/internal/output"
+	"github.com/zhivko-kocev/friday/internal/presets"
 )
 
 // cmdDoctor runs a read-only health check on the local install. Surfaces:
@@ -141,7 +142,7 @@ func cmdDoctor(args []string) int {
 // one would concatenate them all, which is almost never intended.
 func checkEntryFiles(storeDir string) {
 	var present []string
-	for _, rel := range []string{"core.md", "core/core.md", "identity.md"} {
+	for _, rel := range presets.EntryFiles {
 		if _, err := os.Stat(filepath.Join(storeDir, filepath.FromSlash(rel))); err == nil {
 			present = append(present, rel)
 		}

@@ -21,9 +21,8 @@ const (
 	defaultDirMode  fs.FileMode = 0o755
 )
 
-// reasonAcceptedDrift is the marker on an InSync change that flags the
-// "user kept their target version" outcome. apply uses it to update the
-// drift baseline.
+// reasonAcceptedDrift labels an InSync change where the user kept their
+// target version. Display only — apply keys on Change.acceptedDrift.
 const reasonAcceptedDrift = "kept dest version (drift accepted)"
 
 // Push applies friday.yaml rules from store → adapter targets.
@@ -55,9 +54,12 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 	}
 
 	storeAbs := cfg.StoreDir
-	driftPath, err := drift.DefaultPath()
-	if err != nil {
-		return nil, fmt.Errorf("resolve drift path: %w", err)
+	driftPath := opts.driftPath
+	if driftPath == "" {
+		driftPath, err = drift.DefaultPath()
+		if err != nil {
+			return nil, fmt.Errorf("resolve drift path: %w", err)
+		}
 	}
 	store, err := drift.Load(driftPath)
 	if err != nil {
@@ -82,6 +84,9 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 		for i := range changes {
 			ch := &changes[i]
 			resolveConflict(ch, store, opts)
+			if ch.mergedPush {
+				prepareMergeWriteBack(ch, ad.Rules[ch.RuleIndex])
+			}
 			if !opts.DryRun {
 				didWrite, err := apply(ch, store, dir)
 				if err != nil {
@@ -153,9 +158,22 @@ func resolveConflict(ch *Change, store *drift.Store, opts Options) {
 			return
 		}
 	case DirPull:
-		// Missing baseline reads as drifted (exists && drifted) — the
-		// conservative stance for stores that predate canonical tracking.
-		// It self-heals: the first push or pull records the baseline.
+		// A target that still matches its own baseline was never edited —
+		// there is nothing to capture. The planned Update means the STORE
+		// side is newer; writing the stale target over it is exactly the
+		// loss the baselines exist to prevent. Not a conflict, so --force
+		// doesn't resurrect the overwrite either.
+		if ch.SrcAbs != "" {
+			if tDrifted, tExists := store.Check(ch.Adapter, ch.SrcAbs); tExists && !tDrifted {
+				ch.Action = ActionInSync
+				ch.Reason = "target unchanged since last push — store is newer, push to update"
+				ch.staleTarget = true
+				return
+			}
+		}
+		// Missing canonical baseline reads as drifted (exists && drifted) —
+		// the conservative stance for stores that predate canonical
+		// tracking. It self-heals: in-sync runs and writes both record it.
 		drifted, _ = store.CheckCanonical(ch.DestPath)
 		if !drifted {
 			return
@@ -198,20 +216,37 @@ func resolveConflict(ch *Change, store *drift.Store, opts Options) {
 	switch res.Choice {
 	case ConflictKeepCanonical:
 		// Proceed with the planned write. (On pull "canonical" is the
-		// incoming target version — labels flip in the prompt.)
+		// incoming target version — the prompt words it per direction.)
 	case ConflictUseMerged:
-		// Write the merged content instead of the planned version; the
-		// normal apply path records it as the new baseline.
+		// Write the merged content instead of the planned version; on push
+		// the merge must also reach the store — see prepareMergeWriteBack.
 		ch.NewContent = res.Content
+		ch.mergedPush = ch.Direction == DirPush
 	case ConflictTakeTarget:
 		// Don't overwrite. Adopt the current dest as the new baseline so
 		// future runs treat it as canonical until the next real edit.
 		ch.Action = ActionInSync
 		ch.Reason = reasonAcceptedDrift
+		ch.acceptedDrift = true
 	case ConflictSkip:
 		ch.Action = ActionConflict
 		ch.Reason = "skipped"
 	}
+}
+
+// prepareMergeWriteBack routes a push-direction merge into the store. The
+// target-side edits live only in the merged content; leaving the store file
+// untouched would make the very next push plan from it and silently revert
+// the merge. Invertible rules write the merge back to the store file;
+// non-invertible ones (concatenate, frontmatter_strip) keep the old target
+// baseline so the next push flags the file again instead of clobbering it.
+func prepareMergeWriteBack(ch *Change, r *rules.Rule) {
+	invertible := ch.SrcAbs != "" && r.Strategy == rules.StrategyCopy && len(r.FrontmatterStrip) == 0
+	if invertible {
+		ch.storeWriteBack = pullContent(r, ch.SrcContent, ch.NewContent)
+		return
+	}
+	ch.Warning = "merge written to the target only — fold it into the store or the next push will flag this file again"
 }
 
 // apply executes a single Change against disk. Returns true if a write
@@ -233,11 +268,27 @@ func apply(ch *Change, store *drift.Store, dir Direction) (bool, error) {
 		}
 		switch dir {
 		case DirPush:
-			// Target baseline: what friday wrote. Canonical baseline: the
-			// store file it was rendered from — pull consults it later.
-			store.Set(ch.Adapter, ch.DestPath, ch.NewContent)
-			if ch.SrcAbs != "" {
-				store.SetCanonical(ch.SrcAbs, ch.SrcContent)
+			switch {
+			case ch.storeWriteBack != nil:
+				// Merge resolution on an invertible rule: the store file
+				// gets the merge too, so both sides converge and the next
+				// push plans exactly what is already on disk.
+				if err := atomicio.WriteFile(ch.SrcAbs, ch.storeWriteBack, mode); err != nil {
+					return false, err
+				}
+				store.Set(ch.Adapter, ch.DestPath, ch.NewContent)
+				store.SetCanonical(ch.SrcAbs, ch.storeWriteBack)
+			case ch.mergedPush:
+				// Merge on a non-invertible rule: the store still holds the
+				// old content. Keep the old target baseline so the next push
+				// re-prompts instead of silently reverting the merge.
+			default:
+				// Target baseline: what friday wrote. Canonical baseline: the
+				// store file it was rendered from — pull consults it later.
+				store.Set(ch.Adapter, ch.DestPath, ch.NewContent)
+				if ch.SrcAbs != "" {
+					store.SetCanonical(ch.SrcAbs, ch.SrcContent)
+				}
 			}
 		case DirPull:
 			// After a pull both sides agree: record the store file as the
@@ -252,7 +303,7 @@ func apply(ch *Change, store *drift.Store, dir Direction) (bool, error) {
 	case ActionInSync:
 		// "Take target" on a conflict: adopt the current dest as the new
 		// baseline so future runs stop flagging it.
-		if ch.Reason == reasonAcceptedDrift {
+		if ch.acceptedDrift {
 			if dir == DirPush {
 				store.Set(ch.Adapter, ch.DestPath, ch.OldContent)
 			} else {
@@ -260,6 +311,41 @@ func apply(ch *Change, store *drift.Store, dir Direction) (bool, error) {
 			}
 			return true, nil
 		}
+		return healBaselines(ch, store, dir), nil
 	}
 	return false, nil
+}
+
+// healBaselines records missing baselines for a change both sides already
+// agree on. Stores that predate baseline tracking (or targets last written
+// by an older friday) otherwise never acquire baselines while in sync — and
+// then every later edit reads as an unresolvable conflict in non-interactive
+// runs. Only absent entries are recorded, so a steady-state run stays
+// save-free. Downgraded stale-target changes are excluded: their store side
+// carries unsynced edits that must NOT be declared synced.
+func healBaselines(ch *Change, store *drift.Store, dir Direction) (recorded bool) {
+	if ch.staleTarget {
+		return false
+	}
+	switch dir {
+	case DirPush:
+		if ch.OldContent != nil && store.BaselineHash(ch.Adapter, ch.DestPath) == "" {
+			store.Set(ch.Adapter, ch.DestPath, ch.OldContent)
+			recorded = true
+		}
+		if ch.SrcAbs != "" && store.CanonicalBaselineHash(ch.SrcAbs) == "" {
+			store.SetCanonical(ch.SrcAbs, ch.SrcContent)
+			recorded = true
+		}
+	case DirPull:
+		if ch.NewContent != nil && store.CanonicalBaselineHash(ch.DestPath) == "" {
+			store.SetCanonical(ch.DestPath, ch.NewContent)
+			recorded = true
+		}
+		if ch.SrcAbs != "" && store.BaselineHash(ch.Adapter, ch.SrcAbs) == "" {
+			store.Set(ch.Adapter, ch.SrcAbs, ch.SrcContent)
+			recorded = true
+		}
+	}
+	return recorded
 }

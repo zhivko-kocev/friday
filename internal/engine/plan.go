@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/zhivko-kocev/friday/internal/config"
+	"github.com/zhivko-kocev/friday/internal/conflict"
 	"github.com/zhivko-kocev/friday/internal/frontmatter"
 	"github.com/zhivko-kocev/friday/internal/rules"
 )
@@ -77,7 +79,9 @@ func planConcatenate(adapterName string, r *rules.Rule, storeAbs, targetAbs stri
 	}
 	ch.NewContent = bytes.Join(parts, []byte(r.Sep()))
 	if r.MaxBytes > 0 && len(ch.NewContent) > r.MaxBytes {
-		ch.Reason = fmt.Sprintf("%d bytes exceeds the agent's %d-byte limit — it may truncate or ignore this file; trim the from-list", len(ch.NewContent), r.MaxBytes)
+		// Warning, not Reason: conflict resolution rewrites Reason, and the
+		// oversize advisory must survive it.
+		ch.Warning = fmt.Sprintf("%d bytes exceeds the agent's %d-byte limit — it may truncate or ignore this file; trim the from-list", len(ch.NewContent), r.MaxBytes)
 	}
 	old, err := os.ReadFile(dest)
 	switch {
@@ -98,16 +102,31 @@ func planConcatenate(adapterName string, r *rules.Rule, storeAbs, targetAbs stri
 
 func planCopy(adapterName string, r *rules.Rule, storeAbs, targetAbs string) ([]Change, error) {
 	var out []Change
+	// Tokenized templates make the from-patterns independent content globs —
+	// each one failing to match is worth reporting. A literal template's
+	// from-list carries alternative spellings (core.md vs core/core.md) where
+	// only one is expected to exist, so those report per rule instead.
+	perPattern := rules.HasToken(r.To)
 	matchedAny := false
+	// A literal template (or colliding filenames) can map several sources to
+	// one destination; the from-list is ordered most-preferred first, so the
+	// first source wins. `friday lint` reports the collision.
+	seenDest := map[string]bool{}
 	for _, pat := range r.From {
 		matches, err := rules.Expand(storeAbs, pat)
 		if err != nil {
 			return nil, fmt.Errorf("expand %q: %w", pat, err)
 		}
 		if len(matches) == 0 {
-			// Missing-source is reported per rule, not per pattern: from-lists
-			// carry alternative spellings (core.md vs core/core.md) where only
-			// one is expected to exist.
+			if perPattern {
+				out = append(out, Change{
+					Adapter:   adapterName,
+					Direction: DirPush,
+					Sources:   []string{pat},
+					Action:    ActionMissingSource,
+					Reason:    fmt.Sprintf("no source files matched %q", pat),
+				})
+			}
 			continue
 		}
 		matchedAny = true
@@ -126,6 +145,10 @@ func planCopy(adapterName string, r *rules.Rule, storeAbs, targetAbs string) ([]
 			tokens := rules.TokensFor(m, anchor)
 			destRel := tokens.Expand(r.To)
 			destAbs := filepath.Join(targetAbs, destRel)
+			if seenDest[destAbs] {
+				continue
+			}
+			seenDest[destAbs] = true
 
 			ch := Change{
 				Adapter:    adapterName,
@@ -155,7 +178,7 @@ func planCopy(adapterName string, r *rules.Rule, storeAbs, targetAbs string) ([]
 			out = append(out, ch)
 		}
 	}
-	if !matchedAny {
+	if !matchedAny && !perPattern {
 		out = append(out, Change{
 			Adapter:   adapterName,
 			Direction: DirPush,
@@ -194,6 +217,11 @@ func planPull(adapterName string, ad *config.Adapter, storeAbs, targetAbs string
 			})
 			continue
 		}
+		// A literal template maps several from-variants to one target file;
+		// only the first (most-preferred) variant may capture it — pulling
+		// the same target into every variant would fan one file's content
+		// out over unrelated store files.
+		seenTarget := map[string]bool{}
 		for _, pat := range r.From {
 			matches, err := rules.Expand(storeAbs, pat)
 			if err != nil {
@@ -205,6 +233,10 @@ func planPull(adapterName string, ad *config.Adapter, storeAbs, targetAbs string
 				destRel := tokens.Expand(r.To)
 				targetAbsFile := filepath.Join(targetAbs, destRel)
 				storeAbsFile := filepath.Join(storeAbs, m)
+				if seenTarget[targetAbsFile] {
+					continue
+				}
+				seenTarget[targetAbsFile] = true
 
 				targetInfo, err := os.Stat(targetAbsFile)
 				if os.IsNotExist(err) {
@@ -243,14 +275,46 @@ func planPull(adapterName string, ad *config.Adapter, storeAbs, targetAbs string
 					ch.NewContent = storeContent
 				} else {
 					ch.Action = ActionUpdate
-					// Restore the markers push resolved. The inverse is
-					// textual — presets keep it safe by rewriting to a path
-					// that never occurs naturally in store content.
-					ch.NewContent = r.ApplyReplaceInverse(targetContent)
+					ch.NewContent = pullContent(r, storeContent, targetContent)
 				}
 				out = append(out, ch)
 			}
 		}
 	}
 	return out, nil
+}
+
+// pullContent computes the store-side content for a pull/import update. The
+// replace inverse is textual, so applying it to the whole target would also
+// rewrite natural occurrences of a replace value (a literal "~/.friday" in
+// prose) that the push direction left alone. Lines the target didn't touch
+// therefore keep their original store form — aligned via LCS against what
+// push rendered — and only edited or new lines go through the inverse.
+func pullContent(r *rules.Rule, storeContent, targetContent []byte) []byte {
+	if len(r.Replace) == 0 {
+		return targetContent
+	}
+	// The line alignment assumes replace pairs stay within a line; a pair
+	// carrying a newline breaks it, so fall back to the whole-file inverse.
+	for k, v := range r.Replace {
+		if strings.ContainsRune(k, '\n') || strings.ContainsRune(v, '\n') {
+			return r.ApplyReplaceInverse(targetContent)
+		}
+	}
+	storeLines := strings.Split(string(storeContent), "\n")
+	rendered := strings.Split(string(r.ApplyReplace(storeContent)), "\n")
+	if len(storeLines) != len(rendered) {
+		return r.ApplyReplaceInverse(targetContent)
+	}
+	targetLines := strings.Split(string(targetContent), "\n")
+	unchanged := conflict.LCSPairs(targetLines, rendered)
+	out := make([]string, len(targetLines))
+	for i, line := range targetLines {
+		if j, ok := unchanged[i]; ok {
+			out[i] = storeLines[j]
+		} else {
+			out[i] = string(r.ApplyReplaceInverse([]byte(line)))
+		}
+	}
+	return []byte(strings.Join(out, "\n"))
 }

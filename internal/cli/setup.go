@@ -55,6 +55,9 @@ func cmdSetup(args []string) int {
 		output.Err("%v", err)
 		return 1
 	}
+	if !o.dryRun {
+		recordSnapshot(changes)
+	}
 	report(changes, false, o.dryRun)
 	return exitCode(changes)
 }

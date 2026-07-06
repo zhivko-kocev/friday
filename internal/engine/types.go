@@ -65,6 +65,13 @@ type Change struct {
 	NewContent []byte
 	Mode       fs.FileMode // mode of the source file; 0 means "use default"
 	Reason     string      // for skip/conflict/unsupported
+	Warning    string      // advisory that survives resolution (e.g. max_bytes)
+
+	// Engine-internal resolution state — never rendered.
+	acceptedDrift  bool   // ConflictTakeTarget: adopt the dest as the new baseline
+	mergedPush     bool   // ConflictUseMerged on push: NewContent is the merge result
+	storeWriteBack []byte // push-merge on an invertible rule: content for SrcAbs
+	staleTarget    bool   // pull downgraded because the target never drifted
 }
 
 // ConflictChoice is the engine-level outcome of a drift resolution prompt.
@@ -123,4 +130,8 @@ type Options struct {
 	// BaseLookup resolves a drift baseline hash to its content (snapshot
 	// blob store). Nil disables merge-base recovery.
 	BaseLookup func(hash string) ([]byte, bool)
+	// driftPath overrides where baselines are read and written. Compile sets
+	// it to a throwaway file so temp-store runs never touch the user's real
+	// drift state. Empty means drift.DefaultPath().
+	driftPath string
 }

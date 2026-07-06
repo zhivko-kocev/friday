@@ -28,10 +28,11 @@ func importFlags(o *importOpts) *flag.FlagSet {
 func cmdImport(args []string) int {
 	var o importOpts
 	fs := importFlags(&o)
-	if err := fs.Parse(args); err != nil {
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if len(pos) != 1 {
 		output.Err("usage: friday import <adapter-name-or-target-dir>")
 		return 1
 	}
@@ -41,7 +42,7 @@ func cmdImport(args []string) int {
 		output.Err("%v", err)
 		return 1
 	}
-	adapter, err := resolveAdapterArg(cfg, fs.Arg(0))
+	adapter, err := resolveAdapterArg(cfg, pos[0])
 	if err != nil {
 		output.Err("%v", err)
 		return 1
@@ -60,6 +61,9 @@ func cmdImport(args []string) int {
 	if err != nil {
 		output.Err("%v", err)
 		return 1
+	}
+	if !o.dryRun {
+		recordSnapshot(changes)
 	}
 	report(changes, false, o.dryRun)
 	return exitCode(changes)

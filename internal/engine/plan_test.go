@@ -317,13 +317,110 @@ func TestPlanConcatenateMaxBytesWarning(t *testing.T) {
 	if len(changes) != 1 || changes[0].Action != ActionCreate {
 		t.Fatalf("got %+v", changes)
 	}
-	if !strings.Contains(changes[0].Reason, "exceeds") {
-		t.Errorf("Reason = %q, want the over-limit warning", changes[0].Reason)
+	if !strings.Contains(changes[0].Warning, "exceeds") {
+		t.Errorf("Warning = %q, want the over-limit warning", changes[0].Warning)
 	}
 	// Under the limit: no warning.
 	ad.Rules[0].MaxBytes = 200
 	changes, _ = planPush("test", ad, storeAbs, targetAbs)
-	if changes[0].Reason != "" {
-		t.Errorf("Reason = %q, want none under the limit", changes[0].Reason)
+	if changes[0].Warning != "" {
+		t.Errorf("Warning = %q, want none under the limit", changes[0].Warning)
+	}
+}
+
+func TestPlanCopyLiteralToFirstVariantWins(t *testing.T) {
+	// A store mid-migration carries both core.md and the legacy identity.md.
+	// The from-list is most-preferred first, so core.md must win — planning
+	// both would write the same dest twice with the LAST variant on top.
+	storeAbs, targetAbs := scaffold(t, map[string]string{
+		"core.md":     "new core",
+		"identity.md": "legacy",
+	})
+	ad := &config.Adapter{
+		Target: targetAbs,
+		Rules: []*rules.Rule{
+			{From: rules.FromSpec{"core.md", "core/core.md", "identity.md"}, To: "AGENTS.md", Strategy: rules.StrategyCopy},
+		},
+	}
+	changes, err := planPush("test", ad, storeAbs, targetAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("got %d changes, want 1 (one dest, first variant wins): %+v", len(changes), changes)
+	}
+	if changes[0].Sources[0] != "core.md" || string(changes[0].NewContent) != "new core" {
+		t.Errorf("winner = %v %q, want core.md / \"new core\"", changes[0].Sources, changes[0].NewContent)
+	}
+}
+
+func TestPlanPullLiteralToCapturesPreferredVariantOnly(t *testing.T) {
+	storeAbs, targetAbs := scaffold(t, map[string]string{
+		"core.md":     "new core",
+		"identity.md": "legacy",
+	})
+	if err := os.WriteFile(filepath.Join(targetAbs, "AGENTS.md"), []byte("edited"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ad := &config.Adapter{
+		Target: targetAbs,
+		Rules: []*rules.Rule{
+			{From: rules.FromSpec{"core.md", "core/core.md", "identity.md"}, To: "AGENTS.md", Strategy: rules.StrategyCopy},
+		},
+	}
+	changes, err := planPull("test", ad, storeAbs, targetAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].DestRel != "core.md" {
+		t.Fatalf("got %+v, want a single pull into core.md — fanning one target over every variant corrupts the others", changes)
+	}
+}
+
+func TestPlanCopyTokenizedToReportsMissingPerPattern(t *testing.T) {
+	// With a tokenized template the from-patterns are independent globs; a
+	// typo'd second pattern must be reported, not silently absorbed because
+	// the first one matched.
+	storeAbs, targetAbs := scaffold(t, map[string]string{"rules/a.md": "A"})
+	ad := &config.Adapter{
+		Target: targetAbs,
+		Rules: []*rules.Rule{
+			{From: rules.FromSpec{"rules/*.md", "standrds/*.md"}, To: "x/{filename}", Strategy: rules.StrategyCopy},
+		},
+	}
+	changes, err := planPush("test", ad, storeAbs, targetAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var missing []string
+	for _, ch := range changes {
+		if ch.Action == ActionMissingSource {
+			missing = append(missing, ch.Sources...)
+		}
+	}
+	if len(missing) != 1 || missing[0] != "standrds/*.md" {
+		t.Errorf("missing-source = %v, want exactly the typo'd pattern", missing)
+	}
+}
+
+func TestPullContentPreservesUnchangedStoreLines(t *testing.T) {
+	r := &rules.Rule{
+		From:    rules.FromSpec{"a.md"},
+		To:      "a.md",
+		Replace: map[string]string{"${ROOT}": "~/.friday"},
+	}
+	if err := r.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	// Line 1 mentions ~/.friday NATURALLY (no marker in the store). Line 3
+	// carries the marker. The target edit touches only line 2.
+	store := []byte("clone into ~/.friday\nline two\nsee ${ROOT}/core.md\n")
+	target := r.ApplyReplace(store) // what push wrote
+	target = []byte(strings.Replace(string(target), "line two", "line two EDITED ~/.friday", 1))
+
+	got := string(pullContent(r, store, target))
+	want := "clone into ~/.friday\nline two EDITED ${ROOT}\nsee ${ROOT}/core.md\n"
+	if got != want {
+		t.Errorf("pullContent:\n got %q\nwant %q", got, want)
 	}
 }

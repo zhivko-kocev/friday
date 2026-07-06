@@ -24,7 +24,7 @@ Commands:
   explain <target-file>      Show which adapter + rule produces a target file, and from which sources
   import <adapter|dir>       Capture an existing agent installation into ~/.friday (reverse of push)
   compile --from X --to Y    Convert one agent's installed config into another's format (no ~/.friday round trip)
-  rollback [--list] [<id>]   Restore the target state recorded before a push (snapshots taken on every push)
+  rollback [--list] [<id>]   Restore the file state recorded before a write (snapshots taken by push/pull/sync/setup/promote/import/compile)
   plugin list|validate       Manage out-of-tree presets in ~/.friday/plugins/*.yaml
   lint                       Static store checks: frontmatter, oversized files, broken refs, dest collisions
   eject [--yes]              Capture targets into the store, then remove friday.yaml + caches (clean exit)
@@ -68,7 +68,7 @@ Examples:
   friday push claude                             # push only to claude (creates target dir if missing)
 
   friday pull                                    # walk each installed agent: show diff, ask apply / skip / quit
-  friday pull claude                             # legacy: pull claude only, file-level conflicts
+  friday pull claude                             # same flow, restricted to claude
 
   friday setup                                   # in a project dir: pick an agent + store items, write .claude/ etc.
   friday promote .claude/skills/new-skill --propose -m "add new-skill"   # project skill → ~/.friday → team MR

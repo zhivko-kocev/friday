@@ -153,3 +153,86 @@ func TestImportLiteralTemplatePrefersExistingVariant(t *testing.T) {
 		t.Fatalf("got %+v, want update of the existing core/core.md", changes)
 	}
 }
+
+func TestImportNaturalReplaceValueIsNotPhantomEdit(t *testing.T) {
+	// The store legitimately contains the replace VALUE ("~/.friday") with
+	// no marker; push copies it out unchanged. Import must compare in
+	// target-space and report in-sync — inverting the target instead reads
+	// the natural occurrence as an edit, and a forced import (eject) would
+	// then rewrite the store file in place.
+	storeAbs, targetAbs := scaffold(t, map[string]string{
+		"agents/architect.md": "plans; see ~/.friday/core/core.md",
+	})
+	populateTarget(t, targetAbs, map[string]string{
+		"agents/architect.md": "plans; see ~/.friday/core/core.md",
+	})
+	changes, err := planImport("test", claudeishAdapter(targetAbs), storeAbs, targetAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ch := range changes {
+		if ch.DestRel == "agents/architect.md" {
+			if ch.Action != ActionInSync {
+				t.Errorf("action = %v (%s), want InSync — phantom edit from the textual inverse", ch.Action, ch.Reason)
+			}
+			return
+		}
+	}
+	t.Fatal("agents/architect.md not planned")
+}
+
+func TestImportSkipsFilesNoFromPatternAccepts(t *testing.T) {
+	// agents/notes.txt matches the to-glob agents/* but no from-pattern
+	// (agents/*.md): importing it would create a store orphan that push
+	// never consumes, silently breaking the round trip.
+	storeAbs, targetAbs := scaffold(t, nil)
+	populateTarget(t, targetAbs, map[string]string{
+		"agents/a.md":      "agent",
+		"agents/notes.txt": "scratch",
+	})
+	ad := &config.Adapter{
+		Target: targetAbs,
+		Rules: []*rules.Rule{
+			{From: rules.FromSpec{"agents/*.md"}, To: "agents/{filename}", Strategy: rules.StrategyCopy},
+		},
+	}
+	changes, err := planImport("test", ad, storeAbs, targetAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mdAction, txtAction Action = -1, -1
+	for _, ch := range changes {
+		switch {
+		case ch.DestRel == "agents/a.md":
+			mdAction = ch.Action
+		case ch.DestRel == "agents/notes.txt":
+			txtAction = ch.Action
+		}
+	}
+	if mdAction != ActionCreate {
+		t.Errorf("a.md action = %v, want Create", mdAction)
+	}
+	if txtAction != ActionUnsupported {
+		t.Errorf("notes.txt action = %v, want Unsupported skip (no from-pattern maps it)", txtAction)
+	}
+}
+
+func TestImportInvertsPerFromPattern(t *testing.T) {
+	// Multi-pattern from-lists invert against each pattern's own anchor;
+	// the first pattern that accepts the inverted path wins.
+	storeAbs, targetAbs := scaffold(t, nil)
+	populateTarget(t, targetAbs, map[string]string{"bits/x.md": "content"})
+	ad := &config.Adapter{
+		Target: targetAbs,
+		Rules: []*rules.Rule{
+			{From: rules.FromSpec{"commands/*.md", "extras/*.md"}, To: "bits/{filename}", Strategy: rules.StrategyCopy},
+		},
+	}
+	changes, err := planImport("test", ad, storeAbs, targetAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].DestRel != "commands/x.md" {
+		t.Fatalf("got %+v, want one Create into commands/x.md (first accepting pattern)", changes)
+	}
+}

@@ -64,6 +64,9 @@ func cmdCompile(args []string) int {
 		output.Err("nothing written — re-run with --allow-lossy to accept the losses above")
 		return 2
 	}
+	if !o.dryRun {
+		recordSnapshot(res.Emitted)
+	}
 	report(res.Emitted, false, o.dryRun)
 	return exitCode(res.Emitted)
 }

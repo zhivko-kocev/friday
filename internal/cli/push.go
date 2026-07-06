@@ -28,7 +28,8 @@ func pushFlags(o *pushOpts) *flag.FlagSet {
 func cmdPush(args []string) int {
 	var o pushOpts
 	fs := pushFlags(&o)
-	if err := fs.Parse(args); err != nil {
+	adapters, err := parseInterleaved(fs, args)
+	if err != nil {
 		return 1
 	}
 
@@ -37,7 +38,7 @@ func cmdPush(args []string) int {
 		output.Err("%v", err)
 		return 1
 	}
-	return runPush(cfg, fs.Args(), o)
+	return runPush(cfg, adapters, o)
 }
 
 // runPush executes the push phase against the given adapters (empty = every
@@ -82,9 +83,10 @@ func runPush(cfg *config.Config, adapters []string, o pushOpts) int {
 	return exitCode(changes)
 }
 
-// recordSnapshot journals what this push wrote so `friday rollback` can undo
-// it. Best-effort: a failed snapshot warns but never fails the push that
-// already succeeded.
+// recordSnapshot journals what a command wrote so `friday rollback` can undo
+// it. Every write-capable command (push, pull, sync, setup, promote, import,
+// compile) records one. Best-effort: a failed snapshot warns but never fails
+// the writes that already succeeded.
 func recordSnapshot(changes []engine.Change) {
 	var writes []snapshot.FileWrite
 	for _, ch := range changes {

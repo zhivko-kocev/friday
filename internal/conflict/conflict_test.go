@@ -127,3 +127,16 @@ func TestPromptDirtyMergeWithMarkers(t *testing.T) {
 		}
 	}
 }
+
+func TestPromptMenuWordsOptionsFromLabels(t *testing.T) {
+	// On pull the incoming side is the target and the dest is the store; a
+	// hardcoded "keep canonical / use target" menu promises the opposite of
+	// what the choices do there. The menu must be built from the labels.
+	in := strings.NewReader("s\n")
+	out := &bytes.Buffer{}
+	promptIO(in, out, "target", "store", []byte("a"), []byte("b"), nil)
+	menu := out.String()
+	if !strings.Contains(menu, "[k] keep target") || !strings.Contains(menu, "[t] use store") {
+		t.Errorf("pull-direction menu misleads:\n%s", menu)
+	}
+}

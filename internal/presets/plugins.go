@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -82,9 +83,14 @@ func loadPluginFile(path string) (Preset, error) {
 	if len(pf.Rules) == 0 {
 		return Preset{}, fmt.Errorf("at least one rule is required")
 	}
-	for i, r := range append(append([]*rules.Rule{}, pf.Rules...), pf.ProjectRules...) {
+	for i, r := range pf.Rules {
 		if err := r.Normalize(); err != nil {
 			return Preset{}, fmt.Errorf("rule[%d]: %w", i, err)
+		}
+	}
+	for i, r := range pf.ProjectRules {
+		if err := r.Normalize(); err != nil {
+			return Preset{}, fmt.Errorf("project_rule[%d]: %w", i, err)
 		}
 	}
 	return Preset{
@@ -105,4 +111,32 @@ func AllAdaptersWith(storeDir string) (map[string]Preset, []error) {
 		out[name] = p
 	}
 	return out, errs
+}
+
+// GetWith resolves a preset name against the built-ins overlaid with the
+// store's plugins — the same set push and pull operate on, so a plugin
+// preset is equally visible to setup and promote. A plugin may shadow a
+// built-in. Load errors are swallowed here; `friday plugin validate`
+// surfaces them.
+func GetWith(storeDir, name string) (Preset, bool) {
+	if plugins, _ := LoadPlugins(storeDir); plugins != nil {
+		if p, ok := plugins[name]; ok {
+			return p, true
+		}
+	}
+	return Get(name)
+}
+
+// NamesWith returns every available preset name — built-ins plus the store's
+// plugins — in alphabetical order.
+func NamesWith(storeDir string) []string {
+	names := Names()
+	plugins, _ := LoadPlugins(storeDir)
+	for n := range plugins {
+		if _, builtin := registry[n]; !builtin {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return names
 }

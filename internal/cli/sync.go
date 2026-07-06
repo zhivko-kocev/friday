@@ -26,7 +26,8 @@ func syncFlags(o *syncOpts) *flag.FlagSet {
 func cmdSync(args []string) int {
 	var o syncOpts
 	fs := syncFlags(&o)
-	if err := fs.Parse(args); err != nil {
+	adapters, err := parseInterleaved(fs, args)
+	if err != nil {
 		return 1
 	}
 
@@ -35,7 +36,6 @@ func cmdSync(args []string) int {
 		output.Err("%v", err)
 		return 1
 	}
-	adapters := fs.Args()
 	if len(adapters) > 0 {
 		if _, err := cfg.SelectAdapters(adapters); err != nil {
 			output.Err("%v", err)
@@ -46,7 +46,7 @@ func cmdSync(args []string) int {
 	output.Header("sync: pull")
 	var pullCode int
 	if o.noInteractive {
-		pullCode = pullBatch(cfg, adapters, o.dryRun, o.force, false)
+		pullCode = pullBatch(cfg, adapters, o.dryRun, o.force)
 	} else {
 		pullCode = pullPerAdapter(cfg, adapters, o.dryRun, o.force)
 	}
