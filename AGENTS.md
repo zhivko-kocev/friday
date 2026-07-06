@@ -29,14 +29,21 @@ flat, no nested `store/`.
 ## Standard repo layout
 
 ```
-identity.md           who you are (concatenated into CLAUDE.md / AGENTS.md / copilot-instructions.md)
+core.md               the entry file (concatenated into CLAUDE.md / AGENTS.md / copilot-instructions.md);
+                      also matched at core/core.md — legacy identity.md still accepted
 rules/*.md            behaviour rules
+standards/*.md        per-language baselines (not copied — reached via ~/.friday refs)
 agents/*.md           agent definitions (claude only)
 commands/*.md         slash-commands (claude only)
 skills/<name>/*       skills (recursively mirrored)
+hooks/**/*            hook config + scripts (not copied — wire into settings.json by hand)
 friday.yaml           adapter manifest — auto-seeded with all four presets at init
 .gitignore            scaffolded with secret + runtime-state patterns
 ```
+
+Presets copy only what agents discover on disk (instructions file, agents/,
+commands/, skills/); other store content is reached by reference — each rule
+rewrites `${CLAUDE_PLUGIN_ROOT}` to `~/.friday` via `replace`.
 
 `friday init` always writes `friday.yaml` with every built-in preset on
 the scaffold path. To disable an adapter, delete its entry. To customize a
@@ -107,7 +114,18 @@ adapters:
         strategy: copy | concatenate       # default: copy
         separator: <string>                # concatenate-only; default "\n\n---\n\n"
         frontmatter_strip: [<key>, ...]    # strip listed YAML frontmatter keys
+        replace: {<literal>: <literal>}    # rewrite on push, inverted on pull
 ```
+
+`replace` substitutes literal strings in file content: keys → values on push,
+values → keys on pull. Presets use it to rewrite `${CLAUDE_PLUGIN_ROOT}` —
+the path variable Claude Code plugins use for sibling-file references — to
+`~/.friday`. The map must be invertible: no empty or duplicate values, no
+key == value. Pull compares in target-space (target vs the store's forward
+transform), so unedited files never phantom-update; the textual inverse only
+runs on edited files. Choose replacement values that cannot occur naturally
+in content (`~/.friday` is safe in friday-free repos; `~/.claude` is not),
+or a natural occurrence inside an edited file will turn into the key.
 
 ### Path resolution
 

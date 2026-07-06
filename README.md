@@ -15,14 +15,14 @@ $ friday push
   pushing to installed agents: [claude codex copilot opencode]
 
   adapter: claude
-    create   identity.md+rules/general.md  CLAUDE.md
+    create   core.md+rules/general.md      CLAUDE.md
     create   agents/researcher.md          agents/researcher.md
   adapter: codex
-    create   identity.md+rules/general.md  AGENTS.md
+    create   core.md+rules/general.md      AGENTS.md
   adapter: copilot
-    create   identity.md+rules/general.md  copilot-instructions.md
+    create   core.md+rules/general.md      copilot-instructions.md
   adapter: opencode
-    create   identity.md                   AGENTS.md
+    create   core.md                       AGENTS.md
     create   rules/general.md              rules/general.md
 
   summary:
@@ -74,7 +74,7 @@ Pre-built binaries: see the [releases page](https://github.com/zhivko-kocev/frid
 # Initialize ~/.friday.
 friday init                                    # interactive: prompt for remote URL
 friday init --scaffold                         # non-interactive: empty store
-friday init --remote https://github.com/me/dotai   # non-interactive: clone
+friday init --from-git git@example.com:me/developer-os.git   # non-interactive: clone (--remote is an alias)
 
 # Push to every agent that's installed on this machine
 friday push
@@ -91,6 +91,10 @@ friday pull claude
 # Diff without writing
 friday status
 
+# In a project directory: pick an agent, pick knowledge from ~/.friday,
+# and write it into the project's git-tracked config (.claude/, CLAUDE.md, ...)
+friday setup
+
 # Read-only health check on the local install
 friday doctor
 
@@ -102,25 +106,40 @@ Non-interactive forms for CI / scripting also exist for `push`/`pull` via `--no-
 
 ## The `~/.friday` layout
 
-See the [dotai reference repo](https://github.com/zhivko-kocev/dotai) for a working example.
+Any repo with this shape works — including knowledge repos authored as Claude
+Code plugins (a `developer-os`-style repo with `core/core.md`, `skills/`,
+`agents/`, `standards/`, `hooks/`): clone it with `friday init --from-git URL`
+and push. No `friday.yaml` needed; friday falls back to the built-in presets.
 
 ```
-identity.md          Concatenated into CLAUDE.md / AGENTS.md / copilot-instructions.md
+core.md              The entry file — leads CLAUDE.md / AGENTS.md / copilot-instructions.md.
+                     Also matched at core/core.md; legacy identity.md still works.
 rules/*.md           Per-topic rules. Concat for Claude/Codex/Copilot, split for OpenCode
 agents/*.md          Claude subagent definitions
 commands/*.md        Claude slash commands
 skills/<name>/       Agent skills (Claude + OpenCode)
+standards/*.md       Per-language baselines — stay in the store, reached by reference
+hooks/**             Hook config + scripts — stay in the store (see `friday doctor`)
 friday.yaml          Adapter manifest. Auto-seeded by `friday init` with all four presets.
 ```
 
 ## Built-in presets
 
-| Preset     | Target dir            | Output                                                                       |
-| ---------- | --------------------- | ---------------------------------------------------------------------------- |
-| `claude`   | `~/.claude/`          | `CLAUDE.md` (concat), `agents/`, `commands/`, `skills/`                      |
-| `codex`    | `~/.codex/`           | `AGENTS.md` (concat)                                                         |
-| `opencode` | `~/.config/opencode/` | `AGENTS.md` (identity), `rules/{filename}`, `skills/` (frontmatter stripped) |
-| `copilot`  | `~/.copilot/`         | `copilot-instructions.md` (concat)                                           |
+| Preset     | Target dir            | Output                                                                    |
+| ---------- | --------------------- | ------------------------------------------------------------------------- |
+| `claude`   | `~/.claude/`          | `CLAUDE.md` (concat), `agents/`, `commands/`, `skills/`                   |
+| `codex`    | `~/.codex/`           | `AGENTS.md` (concat)                                                      |
+| `opencode` | `~/.config/opencode/` | `AGENTS.md` (core), `rules/{filename}`, `skills/` (frontmatter stripped)  |
+| `copilot`  | `~/.copilot/`         | `copilot-instructions.md` (concat)                                        |
+| `windsurf` | `~/.codeium/windsurf/memories/` | `global_rules.md` (concat, 6k-char cap; Windsurf is Devin Desktop by Cognition now — same paths) |
+| `antigravity` | `~/.gemini/`       | `GEMINI.md` (concat)                                                      |
+| `pi`       | `~/.pi/agent/`        | `AGENTS.md` (concat), `skills/` (Agent Skills standard)                   |
+
+Presets copy what each agent *discovers* on disk. Everything else in the store
+(`core/`, `standards/`, `hooks/`, ...) stays in `~/.friday` and is reached by
+reference: every rule rewrites the Claude-plugin path variable
+`${CLAUDE_PLUGIN_ROOT}` to `~/.friday` on push (and back on pull), so knowledge
+repos authored as Claude Code plugins — like developer-os — work unmodified.
 
 Paths verified against each agent's current documentation (Claude Code, [Codex CLI](https://developers.openai.com/codex/guides/agents-md), [OpenCode](https://opencode.ai/docs/config/), [Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions)).
 
@@ -132,6 +151,7 @@ To disable an adapter, delete its entry from `friday.yaml`. To customize a targe
 
 ```
 init [flags]               Prompt for a remote URL; clone or scaffold ~/.friday
+setup [flags]              In a project dir: pick an agent + store items, write .claude/ etc.
 list                       Adapters in friday.yaml + whether each is installed
 push [adapters...]         Write ~/.friday into each installed agent's dir
 pull [adapters...]         No args = per-agent diff + apply prompt; with args = legacy batch
@@ -146,6 +166,7 @@ Run `friday help` for full flags.
 
 - **Atomic writes** — every target file is written via a temp file + rename, so a Ctrl-C mid-write leaves the previous version intact.
 - **Drift detection** — friday tracks SHA256 of every file it writes and refuses to clobber edits you've made directly in an agent's dir. Resolve interactively or with `--force`.
+- **Pull captures edits, not new files** — a file *created* directly in an agent dir (e.g. a new skill authored in `~/.claude/skills/`) is invisible to `pull`; move it into `~/.friday` yourself. (`friday import` is on the roadmap to close this.)
 - **CRLF tolerance** — Windows checkouts don't get flagged as drift.
 - **No secrets** — the scaffolded `.gitignore` filters `.env`, `*.key`, `*.pem`, and Claude Code's runtime state dirs.
 

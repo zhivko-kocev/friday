@@ -10,7 +10,7 @@ fontsize: 11pt
 
 **One config. Every AI agent.**
 
-You use Claude Code at home, Cursor at work, OpenCode on your laptop, and your
+You use Claude Code at home, Codex at work, OpenCode on your laptop, and your
 team standardized on Copilot last quarter. They each want their config in a
 different place, in a different format, with subtly different conventions.
 Updating "be terse, lead with the answer" means editing four files in four
@@ -26,9 +26,9 @@ the right way.
 
 ```bash
 friday init --remote git@github.com:me/ai-config.git
-# edit ~/.friday/identity.md, rules/*.md, skills/*/, ...
+# edit ~/.friday/core.md, rules/*.md, skills/*/, ...
 friday push
-# writes ~/.claude/CLAUDE.md, ~/.cursor/rules/*, ~/.config/opencode/AGENTS.md, ~/.github/copilot-instructions.md
+# writes ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.config/opencode/AGENTS.md, ~/.copilot/copilot-instructions.md
 friday remote push -m "tweak rules"
 # git add -A && commit && push, all from one command
 ```
@@ -40,9 +40,9 @@ That's it. No proprietary format. No hosted service. No daemon.
 ## What you get
 
 - **One canonical store**, version-controlled in a git repo of your choice.
-- **Four built-in presets** for Claude Code, Cursor, OpenCode, and GitHub Copilot.
+- **Four built-in presets** for Claude Code, Codex, OpenCode, and GitHub Copilot.
   Add a fifth in 30 lines of Go.
-- **Plain Markdown content.** Your config repo is just `identity.md`, `rules/*.md`,
+- **Plain Markdown content.** Your config repo is just `core.md`, `rules/*.md`,
   `skills/foo/*`. No yaml manifest required — friday seeds one on init with
   every built-in preset, but you can hand-edit or delete entries freely.
 - **Round-trip with conflict detection.** Edit a target file directly?
@@ -58,7 +58,7 @@ That's it. No proprietary format. No hosted service. No daemon.
 ## Standard layout (the contract)
 
 ```
-identity.md           who you are (becomes the head of CLAUDE.md / AGENTS.md)
+core.md               the entry file (becomes the head of CLAUDE.md / AGENTS.md)
 rules/*.md            behaviour rules — concatenated into one file per agent
 agents/*.md           Claude sub-agent definitions
 commands/*.md         Claude slash-commands
@@ -104,7 +104,7 @@ to `internal/presets/presets.go`. The next `friday push` includes it.
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  ~/.friday/    ← one repo, plain markdown                   │
-│    identity.md                                              │
+│    core.md                                                  │
 │    rules/*.md                                               │
 │    agents/*.md                                              │
 │    skills/*/                                                │
@@ -112,8 +112,8 @@ to `internal/presets/presets.go`. The next `friday push` includes it.
                    │  friday push  (presets + rule engine)
                    ▼
 ┌──────────────┬──────────────┬────────────────────┬───────────────┐
-│  ~/.claude/  │  ~/.cursor/  │ ~/.config/opencode │  ~/.github/   │
-│  CLAUDE.md   │  rules/*.mdc │  AGENTS.md         │  copilot-     │
+│  ~/.claude/  │  ~/.codex/   │ ~/.config/opencode │  ~/.copilot/  │
+│  CLAUDE.md   │  AGENTS.md   │  AGENTS.md         │  copilot-     │
 │  agents/*    │              │  rules/*.md        │  instructions │
 │  commands/*  │              │  skills/*/         │  .md          │
 │  skills/*/   │              │                    │               │
