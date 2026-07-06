@@ -1,0 +1,131 @@
+package engine
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/zhivko-kocev/friday/internal/config"
+	"github.com/zhivko-kocev/friday/internal/rules"
+)
+
+// Import materializes an adapter's on-disk target back into the store by
+// reverse-expanding each rule's `to` template. Unlike Pull — which iterates
+// store matches and therefore can't see files that exist only on the target
+// side — Import walks the target, so it bootstraps empty stores and captures
+// files authored directly in an agent dir.
+func Import(cfg *config.Config, opts Options) ([]Change, error) {
+	return runWith(cfg, opts, DirPull, planImport)
+}
+
+// planImport reverses one adapter: target files → store files. Concatenate
+// and frontmatter-stripped rules are lossy in reverse and reported as
+// unsupported; replace rules invert cleanly.
+func planImport(adapterName string, ad *config.Adapter, storeAbs, targetAbs string) ([]Change, error) {
+	var out []Change
+	skip := func(ri int, to, reason string) {
+		out = append(out, Change{
+			Adapter:   adapterName,
+			Direction: DirPull,
+			RuleIndex: ri,
+			DestRel:   to,
+			Action:    ActionUnsupported,
+			Reason:    reason,
+		})
+	}
+
+	for ri, r := range ad.Rules {
+		if r.Strategy == rules.StrategyConcatenate {
+			skip(ri, r.To, "concatenate rule cannot be imported (multi-source → single target is irreversible)")
+			continue
+		}
+		if len(r.FrontmatterStrip) > 0 {
+			skip(ri, r.To, "rule has frontmatter_strip — importing would re-inject stripped fields")
+			continue
+		}
+		glob, ok := rules.ToGlob(r.To)
+		if !ok {
+			skip(ri, r.To, fmt.Sprintf("template %q is not invertible", r.To))
+			continue
+		}
+		matches, err := rules.Expand(targetAbs, glob)
+		if err != nil {
+			return nil, fmt.Errorf("expand %q against target: %w", glob, err)
+		}
+		anchor := rules.Anchor(r.From[0])
+		for _, m := range matches {
+			var storeRel string
+			if glob == r.To { // literal template: one file, maps to the from-pattern
+				storeRel = literalStoreDest(r.From, storeAbs)
+			} else if storeRel, ok = rules.Invert(r.To, m, anchor); !ok {
+				continue
+			}
+			ch, err := planImportFile(adapterName, r, storeAbs, targetAbs, storeRel, m)
+			if err != nil {
+				return nil, err
+			}
+			ch.RuleIndex = ri
+			out = append(out, ch)
+		}
+	}
+	return out, nil
+}
+
+// literalStoreDest picks where a literal-template rule's file lands in the
+// store: the first from-variant that already exists (so a store shaped like
+// core/core.md doesn't grow a duplicate root core.md), else the first
+// pattern — the canonical spelling.
+func literalStoreDest(from rules.FromSpec, storeAbs string) string {
+	for _, pat := range from {
+		if strings.ContainsAny(pat, "*?[") {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(storeAbs, filepath.FromSlash(pat))); err == nil {
+			return pat
+		}
+	}
+	return from[0]
+}
+
+func planImportFile(adapterName string, r *rules.Rule, storeAbs, targetAbs, storeRel, targetRel string) (Change, error) {
+	targetAbsFile := filepath.Join(targetAbs, filepath.FromSlash(targetRel))
+	storeAbsFile := filepath.Join(storeAbs, filepath.FromSlash(storeRel))
+
+	info, err := os.Stat(targetAbsFile)
+	if err != nil {
+		return Change{}, fmt.Errorf("stat %s: %w", targetAbsFile, err)
+	}
+	raw, err := os.ReadFile(targetAbsFile)
+	if err != nil {
+		return Change{}, fmt.Errorf("read %s: %w", targetAbsFile, err)
+	}
+	content := r.ApplyReplaceInverse(raw)
+
+	ch := Change{
+		Adapter:    adapterName,
+		Direction:  DirPull,
+		Sources:    []string{targetRel},
+		SrcAbs:     targetAbsFile,
+		SrcContent: raw,
+		DestPath:   storeAbsFile,
+		DestRel:    storeRel,
+		NewContent: content,
+		Mode:       info.Mode().Perm(),
+	}
+	old, err := os.ReadFile(storeAbsFile)
+	switch {
+	case os.IsNotExist(err):
+		ch.Action = ActionCreate
+	case err != nil:
+		return ch, fmt.Errorf("read %s: %w", storeAbsFile, err)
+	default:
+		ch.OldContent = old
+		if equalNormalized(old, content) {
+			ch.Action = ActionInSync
+		} else {
+			ch.Action = ActionUpdate
+		}
+	}
+	return ch, nil
+}

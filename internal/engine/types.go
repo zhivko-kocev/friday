@@ -54,7 +54,10 @@ func (a Action) String() string {
 type Change struct {
 	Adapter    string
 	Direction  Direction
+	RuleIndex  int      // index into the adapter's Rules that produced this change
 	Sources    []string // store-relative paths for push; target-relative for pull
+	SrcAbs     string   // absolute path of the single source file ("" for concat)
+	SrcContent []byte   // raw on-disk bytes of SrcAbs, pre-transform — baseline material
 	DestPath   string   // absolute path that would be written (or was)
 	DestRel    string   // human-friendly relative path for display
 	Action     Action
@@ -77,7 +80,17 @@ const (
 	// ConflictSkip leaves both sides untouched and reports the change as a
 	// conflict in the summary.
 	ConflictSkip
+	// ConflictUseMerged writes the resolver-supplied merged content instead
+	// of either side. Resolution.Content carries it.
+	ConflictUseMerged
 )
+
+// Resolution is what a resolver returns: the choice, plus merged content
+// when the choice is ConflictUseMerged.
+type Resolution struct {
+	Choice  ConflictChoice
+	Content []byte
+}
 
 // ConflictInfo is the snapshot the resolver receives. It carries everything
 // the prompt needs without leaking the engine's internal Change type.
@@ -89,12 +102,15 @@ type ConflictInfo struct {
 	DestRel    string
 	OldContent []byte // current target content (the drifted version)
 	NewContent []byte // canonical content the engine would write
+	// BaseContent is the last-synced content both sides diverged from —
+	// recovered from the snapshot blob store via the drift baseline hash.
+	// Nil when unknown (no snapshot yet); the prompt then omits merge.
+	BaseContent []byte
 }
 
-// ConflictResolver is invoked when a push would overwrite a file the user
-// has edited since friday last wrote it. Returning ConflictSkip with a nil
-// resolver is the default in non-interactive mode.
-type ConflictResolver func(ConflictInfo) ConflictChoice
+// ConflictResolver is invoked when a write would clobber edits on the other
+// side. A nil resolver (non-interactive mode) surfaces drift as Conflict.
+type ConflictResolver func(ConflictInfo) Resolution
 
 // Options controls a single Push/Pull/Status invocation.
 type Options struct {
@@ -103,4 +119,8 @@ type Options struct {
 	Force      bool             // overwrite without prompting
 	OnConflict ConflictResolver // nil = treat drift as Conflict (skip)
 	ShowDiff   bool             // print a diff for each Update/Create — caller's responsibility
+	Only       []string         // store-relative source globs; non-empty drops changes with no matching source
+	// BaseLookup resolves a drift baseline hash to its content (snapshot
+	// blob store). Nil disables merge-base recovery.
+	BaseLookup func(hash string) ([]byte, bool)
 }

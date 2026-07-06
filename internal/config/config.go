@@ -149,6 +149,9 @@ func load(manifestPath string, scope Scope, storeDir, targetRoot string) (*Confi
 		if a == nil {
 			return nil, fmt.Errorf("adapter %q is empty", name)
 		}
+		if strings.HasPrefix(name, "~") {
+			return nil, fmt.Errorf("adapter name %q: names starting with '~' are reserved", name)
+		}
 		if a.Target == "" {
 			return nil, fmt.Errorf("adapter %q: target is required", name)
 		}

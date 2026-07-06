@@ -15,23 +15,28 @@ import (
 // would perform — without writing anything or consulting the drift store.
 func planPush(adapterName string, ad *config.Adapter, storeAbs, targetAbs string) ([]Change, error) {
 	var out []Change
-	for _, r := range ad.Rules {
+	for i, r := range ad.Rules {
+		var chs []Change
 		switch r.Strategy {
 		case rules.StrategyConcatenate:
 			ch, err := planConcatenate(adapterName, r, storeAbs, targetAbs)
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, ch)
+			chs = []Change{ch}
 		case rules.StrategyCopy:
-			chs, err := planCopy(adapterName, r, storeAbs, targetAbs)
+			var err error
+			chs, err = planCopy(adapterName, r, storeAbs, targetAbs)
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, chs...)
 		default:
 			return nil, fmt.Errorf("adapter %s: unknown strategy %q", adapterName, r.Strategy)
 		}
+		for j := range chs {
+			chs[j].RuleIndex = i
+		}
+		out = append(out, chs...)
 	}
 	return out, nil
 }
@@ -52,6 +57,7 @@ func planConcatenate(adapterName string, r *rules.Rule, storeAbs, targetAbs stri
 				return Change{}, fmt.Errorf("read %s: %w", m, err)
 			}
 			data = []byte(frontmatter.Strip(string(data), r.FrontmatterStrip))
+			data = r.ApplyReplace(data)
 			parts = append(parts, data)
 			sources = append(sources, m)
 		}
@@ -89,21 +95,19 @@ func planConcatenate(adapterName string, r *rules.Rule, storeAbs, targetAbs stri
 
 func planCopy(adapterName string, r *rules.Rule, storeAbs, targetAbs string) ([]Change, error) {
 	var out []Change
+	matchedAny := false
 	for _, pat := range r.From {
 		matches, err := rules.Expand(storeAbs, pat)
 		if err != nil {
 			return nil, fmt.Errorf("expand %q: %w", pat, err)
 		}
 		if len(matches) == 0 {
-			out = append(out, Change{
-				Adapter:   adapterName,
-				Direction: DirPush,
-				Sources:   []string{pat},
-				Action:    ActionMissingSource,
-				Reason:    "no files matched in store",
-			})
+			// Missing-source is reported per rule, not per pattern: from-lists
+			// carry alternative spellings (core.md vs core/core.md) where only
+			// one is expected to exist.
 			continue
 		}
+		matchedAny = true
 		anchor := rules.Anchor(pat)
 		for _, m := range matches {
 			srcAbs := filepath.Join(storeAbs, m)
@@ -115,7 +119,7 @@ func planCopy(adapterName string, r *rules.Rule, storeAbs, targetAbs string) ([]
 			if err != nil {
 				return nil, fmt.Errorf("read %s: %w", m, err)
 			}
-			content := []byte(frontmatter.Strip(string(raw), r.FrontmatterStrip))
+			content := r.ApplyReplace([]byte(frontmatter.Strip(string(raw), r.FrontmatterStrip)))
 			tokens := rules.TokensFor(m, anchor)
 			destRel := tokens.Expand(r.To)
 			destAbs := filepath.Join(targetAbs, destRel)
@@ -124,6 +128,8 @@ func planCopy(adapterName string, r *rules.Rule, storeAbs, targetAbs string) ([]
 				Adapter:    adapterName,
 				Direction:  DirPush,
 				Sources:    []string{m},
+				SrcAbs:     srcAbs,
+				SrcContent: raw,
 				DestPath:   destAbs,
 				DestRel:    destRel,
 				NewContent: content,
@@ -146,6 +152,15 @@ func planCopy(adapterName string, r *rules.Rule, storeAbs, targetAbs string) ([]
 			out = append(out, ch)
 		}
 	}
+	if !matchedAny {
+		out = append(out, Change{
+			Adapter:   adapterName,
+			Direction: DirPush,
+			Sources:   []string(r.From),
+			Action:    ActionMissingSource,
+			Reason:    fmt.Sprintf("no source files matched %v", []string(r.From)),
+		})
+	}
 	return out, nil
 }
 
@@ -153,11 +168,12 @@ func planCopy(adapterName string, r *rules.Rule, storeAbs, targetAbs string) ([]
 // rules with frontmatter_strip are skipped (lossy in reverse).
 func planPull(adapterName string, ad *config.Adapter, storeAbs, targetAbs string) ([]Change, error) {
 	var out []Change
-	for _, r := range ad.Rules {
+	for ri, r := range ad.Rules {
 		if r.Strategy == rules.StrategyConcatenate {
 			out = append(out, Change{
 				Adapter:   adapterName,
 				Direction: DirPull,
+				RuleIndex: ri,
 				DestRel:   r.To,
 				Action:    ActionUnsupported,
 				Reason:    "concatenate rule cannot be pulled (multi-source → single target is irreversible)",
@@ -168,6 +184,7 @@ func planPull(adapterName string, ad *config.Adapter, storeAbs, targetAbs string
 			out = append(out, Change{
 				Adapter:   adapterName,
 				Direction: DirPull,
+				RuleIndex: ri,
 				DestRel:   r.To,
 				Action:    ActionUnsupported,
 				Reason:    "rule has frontmatter_strip — pulling would re-inject stripped fields",
@@ -206,17 +223,27 @@ func planPull(adapterName string, ad *config.Adapter, storeAbs, targetAbs string
 				ch := Change{
 					Adapter:    adapterName,
 					Direction:  DirPull,
+					RuleIndex:  ri,
 					Sources:    []string{destRel},
+					SrcAbs:     targetAbsFile,
+					SrcContent: targetContent,
 					DestPath:   storeAbsFile,
 					DestRel:    m,
-					NewContent: targetContent,
 					OldContent: storeContent,
 					Mode:       targetInfo.Mode().Perm(),
 				}
-				if equalNormalized(targetContent, storeContent) {
+				// Compare in target-space: in-sync means the target matches
+				// what push would write. Inverting the target instead would
+				// flag natural occurrences of replace values as edits.
+				if equalNormalized(targetContent, r.ApplyReplace(storeContent)) {
 					ch.Action = ActionInSync
+					ch.NewContent = storeContent
 				} else {
 					ch.Action = ActionUpdate
+					// Restore the markers push resolved. The inverse is
+					// textual — presets keep it safe by rewriting to a path
+					// that never occurs naturally in store content.
+					ch.NewContent = r.ApplyReplaceInverse(targetContent)
 				}
 				out = append(out, ch)
 			}
