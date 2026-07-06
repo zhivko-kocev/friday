@@ -87,6 +87,93 @@ func StageCommitPush(dir, msg string) error {
 	return run("-C", dir, "push")
 }
 
+// DefaultBranch returns origin's HEAD branch (e.g. "main"). Falls back to
+// "main" when the remote doesn't advertise one (empty repo, offline, ...).
+func DefaultBranch(dir string) string {
+	out, err := output("-C", dir, "ls-remote", "--symref", "origin", "HEAD")
+	if err != nil {
+		return "main"
+	}
+	// First line: "ref: refs/heads/<branch>\tHEAD"
+	for _, line := range strings.Split(out, "\n") {
+		rest, ok := strings.CutPrefix(line, "ref: refs/heads/")
+		if !ok {
+			continue
+		}
+		if branch, _, ok := strings.Cut(rest, "\t"); ok {
+			return strings.TrimSpace(branch)
+		}
+	}
+	return "main"
+}
+
+// Propose stages everything, builds an ephemeral commit via plumbing, and
+// pushes it to a new remote branch — the local branch, history, and working
+// tree stay exactly as they were (the index is re-reset afterwards). GitLab
+// push options ride along so the server opens an MR against target; servers
+// without push-option support get a plain retry and print their own PR link
+// in the returned push output.
+func Propose(dir, branch, target, msg string) (string, error) {
+	dirty, err := HasUncommitted(dir)
+	if err != nil {
+		return "", err
+	}
+	if !dirty {
+		return "", ErrNothingToCommit
+	}
+	if err := run("-C", dir, "add", "-A"); err != nil {
+		return "", err
+	}
+	// Whatever happens next, put the index back so the store looks untouched.
+	defer func() { _ = run("-C", dir, "reset", "-q") }()
+
+	tree, err := output("-C", dir, "write-tree")
+	if err != nil {
+		return "", err
+	}
+	commitArgs := []string{"-C", dir, "commit-tree", tree, "-m", msg}
+	if head, err := output("-C", dir, "rev-parse", "--verify", "HEAD"); err == nil {
+		commitArgs = append(commitArgs, "-p", head)
+	} // else: repo has no commits yet — root commit
+	commit, err := output(commitArgs...)
+	if err != nil {
+		return "", err
+	}
+
+	refspec := commit + ":refs/heads/" + branch
+	pushOut, err := output("-C", dir, "push",
+		"-o", "merge_request.create",
+		"-o", "merge_request.target="+target,
+		"origin", refspec)
+	if err != nil {
+		// Server may not support push options at all — retry plain.
+		pushOut, err = output("-C", dir, "push", "origin", refspec)
+	}
+	return pushOut, err
+}
+
+// SetOrigin points origin at url, adding the remote if it doesn't exist yet.
+// URL safety relies on ValidateURL — `git remote set-url` has no `--`
+// separator, so flag-like URLs must never reach it.
+func SetOrigin(dir, url string) error {
+	if err := ValidateURL(url); err != nil {
+		return err
+	}
+	if err := run("-C", dir, "remote", "set-url", "origin", url); err != nil {
+		return run("-C", dir, "remote", "add", "origin", url)
+	}
+	return nil
+}
+
+// OriginURL returns the configured origin URL, or "" when none is set.
+func OriginURL(dir string) string {
+	out, err := output("-C", dir, "remote", "get-url", "origin")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
 // Status returns short-form status output for dir.
 func Status(dir string) (string, error) {
 	return output("-C", dir, "status", "--short", "--branch")
