@@ -7,9 +7,22 @@ import (
 	"github.com/zhivko-kocev/friday/internal/output"
 )
 
-// cmdStatus — user-level diff (no writes).
-func cmdStatus(args []string) int {
+type statusOpts struct {
+	asJSON bool
+}
+
+func statusFlags(o *statusOpts) *flag.FlagSet {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs.BoolVar(&o.asJSON, "json", false, "machine-readable output")
+	return fs
+}
+
+// cmdStatus — user-level diff (no writes). --json emits a machine-readable
+// blob for CI; its exit code matches push's (2 on any conflict) so pipelines
+// can gate on drift.
+func cmdStatus(args []string) int {
+	var o statusOpts
+	fs := statusFlags(&o)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -32,6 +45,13 @@ func cmdStatus(args []string) int {
 		output.Err("%v", err)
 		return 1
 	}
+	if o.asJSON {
+		if err := printStatusJSON(cfg, changes); err != nil {
+			output.Err("%v", err)
+			return 1
+		}
+		return exitCode(changes)
+	}
 	output.Header("Friday Status (user)")
 	output.Dim("store: %s", cfg.StoreDir)
 	for _, name := range cfg.AdapterNames() {
@@ -43,5 +63,5 @@ func cmdStatus(args []string) int {
 		}
 	}
 	report(changes, false, true)
-	return 0
+	return exitCode(changes)
 }

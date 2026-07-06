@@ -12,16 +12,26 @@ import (
 	"github.com/zhivko-kocev/friday/internal/output"
 )
 
+type pullOpts struct {
+	dryRun, force, noInteractive bool
+}
+
+func pullFlags(o *pullOpts) *flag.FlagSet {
+	fs := flag.NewFlagSet("pull", flag.ContinueOnError)
+	fs.BoolVar(&o.dryRun, "dry-run", false, "show what would change without writing")
+	fs.BoolVar(&o.force, "force", false, "auto-apply every adapter (skip the prompt)")
+	fs.BoolVar(&o.noInteractive, "no-interactive", false, "skip prompts; legacy batch flow")
+	return fs
+}
+
 // cmdPull captures edits from agent dirs back into ~/.friday.
 //
 // `friday pull`           → walk every installed agent; show diff; ask apply / skip / quit
-// `friday pull claude`    → legacy all-at-once flow with the per-file conflict resolver
+// `friday pull claude`    → same per-adapter flow, restricted to the named adapters
 // `friday pull --no-interactive` → batch flow, no prompts at all
 func cmdPull(args []string) int {
-	fs := flag.NewFlagSet("pull", flag.ContinueOnError)
-	dryRun := fs.Bool("dry-run", false, "show what would change without writing")
-	force := fs.Bool("force", false, "auto-apply every adapter (skip the prompt)")
-	noInteractive := fs.Bool("no-interactive", false, "skip prompts; legacy batch flow")
+	var o pullOpts
+	fs := pullFlags(&o)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -32,14 +42,14 @@ func cmdPull(args []string) int {
 		return 1
 	}
 
-	if len(fs.Args()) > 0 || *noInteractive {
-		return pullBatch(cfg, fs.Args(), *dryRun, *force, !*noInteractive)
+	if o.noInteractive {
+		return pullBatch(cfg, fs.Args(), o.dryRun, o.force, false)
 	}
-	return pullPerAdapter(cfg, *dryRun, *force)
+	return pullPerAdapter(cfg, fs.Args(), o.dryRun, o.force)
 }
 
-// pullBatch is the legacy single-pass flow. Used when the caller names
-// adapters explicitly or opts out of prompts (`--no-interactive`).
+// pullBatch is the legacy single-pass flow, kept for `--no-interactive`
+// (CI / scripts) where per-adapter prompting makes no sense.
 func pullBatch(cfg *config.Config, adapters []string, dryRun, force, interactive bool) int {
 	opts := engine.Options{
 		Adapters: adapters,
@@ -48,6 +58,7 @@ func pullBatch(cfg *config.Config, adapters []string, dryRun, force, interactive
 	}
 	if interactive {
 		opts.OnConflict = interactiveResolver()
+		opts.BaseLookup = baseLookup()
 	}
 	changes, err := engine.Pull(cfg, opts)
 	if err != nil {
@@ -58,14 +69,21 @@ func pullBatch(cfg *config.Config, adapters []string, dryRun, force, interactive
 	return exitCode(changes)
 }
 
-// pullPerAdapter walks every installed adapter, prints what would change,
-// and asks whether to apply. Each adapter is independent — quit stops the
-// loop, skip moves on, apply runs engine.Pull for just that one.
-func pullPerAdapter(cfg *config.Config, dryRun, force bool) int {
-	installed := installedAdapters(cfg)
+// pullPerAdapter walks the given adapters (default: every installed one),
+// prints what would change, and asks whether to apply. Each adapter is
+// independent — quit stops the loop, skip moves on, apply runs engine.Pull
+// for just that one.
+func pullPerAdapter(cfg *config.Config, adapters []string, dryRun, force bool) int {
+	installed := adapters
 	if len(installed) == 0 {
-		output.Warn("no installed agents detected — nothing to pull")
-		return 0
+		installed = installedAdapters(cfg)
+		if len(installed) == 0 {
+			output.Warn("no installed agents detected — nothing to pull")
+			return 0
+		}
+	} else if _, err := cfg.SelectAdapters(installed); err != nil {
+		output.Err("%v", err)
+		return 1
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -100,7 +118,11 @@ func pullPerAdapter(cfg *config.Config, dryRun, force bool) int {
 		}
 		switch choice {
 		case "a":
-			applied, err := engine.Pull(cfg, engine.Options{Adapters: []string{name}})
+			applied, err := engine.Pull(cfg, engine.Options{
+				Adapters:   []string{name},
+				OnConflict: interactiveResolver(),
+				BaseLookup: baseLookup(),
+			})
 			if err != nil {
 				output.Err("apply %s: %v", name, err)
 				return 1
@@ -133,7 +155,7 @@ func hasPullWork(changes []engine.Change) bool {
 // promptApplyChoice reads one of a/s/q from the user. Anything else (or EOF)
 // is treated as quit so a piped stdin doesn't accidentally apply edits.
 func promptApplyChoice(r *bufio.Reader) string {
-	for attempts := 0; attempts < 5; attempts++ {
+	for range 5 {
 		fmt.Print("  [a]pply  [s]kip  [q]uit > ")
 		line, err := r.ReadString('\n')
 		if err != nil {

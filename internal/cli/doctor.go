@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/zhivko-kocev/friday/internal/config"
 	"github.com/zhivko-kocev/friday/internal/drift"
@@ -55,7 +57,11 @@ func cmdDoctor(args []string) int {
 		output.Warn("git: not in PATH — `friday remote` will not work")
 	}
 
-	// 3. manifest
+	// 3. entry file (core.md / core/core.md / legacy identity.md) + hooks
+	checkEntryFiles(storeDir)
+	checkHooks(storeDir)
+
+	// 4. manifest
 	cfg, err := config.LoadUser()
 	switch {
 	case err == nil:
@@ -72,7 +78,7 @@ func cmdDoctor(args []string) int {
 		return 1
 	}
 
-	// 4. adapters
+	// 5. adapters
 	output.Header("adapters")
 	for _, name := range cfg.AdapterNames() {
 		abs, _ := cfg.AdapterTargetAbs(name)
@@ -83,7 +89,7 @@ func cmdDoctor(args []string) int {
 		}
 	}
 
-	// 5. drift across installed adapters
+	// 6. drift across installed adapters
 	output.Header("drift")
 	installed := installedAdapters(cfg)
 	if len(installed) == 0 {
@@ -112,7 +118,7 @@ func cmdDoctor(args []string) int {
 		}
 	}
 
-	// 6. drift store file
+	// 7. drift store file
 	driftPath, err := drift.DefaultPath()
 	if err == nil {
 		if _, err := os.Stat(driftPath); err == nil {
@@ -128,4 +134,35 @@ func cmdDoctor(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// checkEntryFiles reports on the store's entry file. Concatenate rules match
+// core.md, core/core.md, and legacy identity.md — a store carrying more than
+// one would concatenate them all, which is almost never intended.
+func checkEntryFiles(storeDir string) {
+	var present []string
+	for _, rel := range []string{"core.md", "core/core.md", "identity.md"} {
+		if _, err := os.Stat(filepath.Join(storeDir, filepath.FromSlash(rel))); err == nil {
+			present = append(present, rel)
+		}
+	}
+	switch {
+	case len(present) == 0:
+		output.Dim("entry file: none (core.md) — generated instructions will start with your rules")
+	case len(present) > 1:
+		output.Warn("entry file: %d variants present (%s) — concatenate rules will include all of them; keep one", len(present), strings.Join(present, ", "))
+	case present[0] == "identity.md":
+		output.Dim("entry file: identity.md (legacy name — rename to core.md; both work)")
+	default:
+		output.OK("entry file: %s", present[0])
+	}
+}
+
+// checkHooks flags a limitation pushes can't fix: Claude Code auto-loads
+// hooks.json only from plugins. The store's hooks stay in ~/.friday/hooks/;
+// wiring them up means adding entries to ~/.claude/settings.json by hand.
+func checkHooks(storeDir string) {
+	if _, err := os.Stat(filepath.Join(storeDir, "hooks", "hooks.json")); err == nil {
+		output.Dim("hooks: store ships hooks/hooks.json — Claude Code only auto-loads plugin hooks; add entries to ~/.claude/settings.json pointing at %s manually", filepath.Join(storeDir, "hooks"))
+	}
 }

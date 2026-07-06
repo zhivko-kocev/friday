@@ -3,17 +3,31 @@ package cli
 import (
 	"flag"
 
+	"github.com/zhivko-kocev/friday/internal/config"
 	"github.com/zhivko-kocev/friday/internal/engine"
 	"github.com/zhivko-kocev/friday/internal/output"
+	"github.com/zhivko-kocev/friday/internal/snapshot"
 )
+
+type pushOpts struct {
+	dryRun, force, noInteractive, showDiff bool
+	only                                   string
+}
+
+func pushFlags(o *pushOpts) *flag.FlagSet {
+	fs := flag.NewFlagSet("push", flag.ContinueOnError)
+	fs.BoolVar(&o.dryRun, "dry-run", false, "show what would change without writing")
+	fs.BoolVar(&o.force, "force", false, "overwrite without prompting on drift")
+	fs.BoolVar(&o.noInteractive, "no-interactive", false, "don't prompt; treat conflicts as skip")
+	fs.BoolVar(&o.showDiff, "diff", false, "show line diff for each change")
+	fs.StringVar(&o.only, "only", "", "push only changes sourced from files matching this store-relative glob")
+	return fs
+}
 
 // cmdPush — apply rules from the user store into installed agent dirs.
 func cmdPush(args []string) int {
-	fs := flag.NewFlagSet("push", flag.ContinueOnError)
-	dryRun := fs.Bool("dry-run", false, "show what would change without writing")
-	force := fs.Bool("force", false, "overwrite without prompting on drift")
-	noInteractive := fs.Bool("no-interactive", false, "don't prompt; treat conflicts as skip")
-	showDiff := fs.Bool("diff", false, "show line diff for each change")
+	var o pushOpts
+	fs := pushFlags(&o)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -23,8 +37,12 @@ func cmdPush(args []string) int {
 		output.Err("%v", err)
 		return 1
 	}
+	return runPush(cfg, fs.Args(), o)
+}
 
-	adapters := fs.Args()
+// runPush executes the push phase against the given adapters (empty = every
+// installed one). Shared by push and the push half of sync.
+func runPush(cfg *config.Config, adapters []string, o pushOpts) int {
 	if len(adapters) == 0 {
 		// No args → only target agents that are actually installed on this
 		// machine (target dir exists). Explicit names (`friday push claude`)
@@ -40,12 +58,16 @@ func cmdPush(args []string) int {
 
 	opts := engine.Options{
 		Adapters: adapters,
-		DryRun:   *dryRun,
-		Force:    *force,
-		ShowDiff: *showDiff,
+		DryRun:   o.dryRun,
+		Force:    o.force,
+		ShowDiff: o.showDiff,
 	}
-	if !*noInteractive {
+	if o.only != "" {
+		opts.Only = []string{o.only}
+	}
+	if !o.noInteractive {
 		opts.OnConflict = interactiveResolver()
+		opts.BaseLookup = baseLookup()
 	}
 
 	changes, err := engine.Push(cfg, opts)
@@ -53,6 +75,42 @@ func cmdPush(args []string) int {
 		output.Err("%v", err)
 		return 1
 	}
-	report(changes, *showDiff, *dryRun)
+	if !o.dryRun {
+		recordSnapshot(changes)
+	}
+	report(changes, o.showDiff, o.dryRun)
 	return exitCode(changes)
+}
+
+// recordSnapshot journals what this push wrote so `friday rollback` can undo
+// it. Best-effort: a failed snapshot warns but never fails the push that
+// already succeeded.
+func recordSnapshot(changes []engine.Change) {
+	var writes []snapshot.FileWrite
+	for _, ch := range changes {
+		if ch.Action != engine.ActionCreate && ch.Action != engine.ActionUpdate {
+			continue
+		}
+		writes = append(writes, snapshot.FileWrite{
+			Adapter: ch.Adapter,
+			Path:    ch.DestPath,
+			Old:     ch.OldContent,
+			New:     ch.NewContent,
+			Src:     ch.SrcContent,
+		})
+	}
+	if len(writes) == 0 {
+		return
+	}
+	dir, err := snapshot.Dir()
+	if err != nil {
+		output.Warn("snapshot skipped: %v", err)
+		return
+	}
+	snap, err := snapshot.Record(dir, writes)
+	if err != nil {
+		output.Warn("snapshot failed: %v", err)
+		return
+	}
+	output.Dim("snapshot %s recorded (`friday rollback` restores it)", snap.ID)
 }
