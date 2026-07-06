@@ -2,6 +2,11 @@
 
 All notable changes to friday are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `opencode` preset now maps `agents/*.md` → `agents/{filename}` (and `.opencode/agents/` at project scope), adapting the frontmatter: `name` (filename-derived there), Claude's comma-list `tools`, and Claude's `model` sentinels are stripped; `description` and `color` carry over. Tool boundaries don't translate — use `permission` in `opencode.json` if you need them.
+
 ## [0.1.0] — 2026-07-06
 
 The developer-os integration release: friday now consumes knowledge repos authored as Claude Code plugins, passes user-level knowledge down into projects interactively, and lands the bulk of the roadmap.

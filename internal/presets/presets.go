@@ -147,9 +147,22 @@ var registry = map[string]Preset{
 				FrontmatterStrip: []string{"when_to_use", "allowed-tools"},
 				Replace:          storeReplace,
 			},
+			// OpenCode agents live in agents/ and take their name from the
+			// filename; `tools` is a true/false map there (deprecated for
+			// `permission`), so Claude's comma-list form is stripped along
+			// with `name` and Claude's `model` sentinels (inherit/sonnet/...).
+			// description/color survive; tool boundaries don't
+			// carry over — configure `permission` in opencode.json if needed.
+			// https://opencode.ai/docs/agents/
+			{
+				From:             rules.FromSpec{"agents/*.md"},
+				To:               "agents/{filename}",
+				FrontmatterStrip: []string{"name", "tools", "model"},
+				Replace:          storeReplace,
+			},
 		},
 		// OpenCode reads AGENTS.md at the repo root and discovers project
-		// skills under ./.opencode/skills/. https://opencode.ai/docs/skills/
+		// skills and agents under ./.opencode/. https://opencode.ai/docs/skills/
 		ProjectTarget: ".",
 		ProjectRules: []*rules.Rule{
 			{
@@ -162,6 +175,12 @@ var registry = map[string]Preset{
 				From:             rules.FromSpec{"skills/**/*"},
 				To:               ".opencode/skills/{relpath}",
 				FrontmatterStrip: []string{"when_to_use", "allowed-tools"},
+				Replace:          storeReplace,
+			},
+			{
+				From:             rules.FromSpec{"agents/*.md"},
+				To:               ".opencode/agents/{filename}",
+				FrontmatterStrip: []string{"name", "tools", "model"},
 				Replace:          storeReplace,
 			},
 		},

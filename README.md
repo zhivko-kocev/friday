@@ -129,7 +129,7 @@ friday.yaml          Adapter manifest. Auto-seeded by `friday init` with all fou
 | ---------- | --------------------- | ------------------------------------------------------------------------- |
 | `claude`   | `~/.claude/`          | `CLAUDE.md` (concat), `agents/`, `commands/`, `skills/`                   |
 | `codex`    | `~/.codex/`           | `AGENTS.md` (concat)                                                      |
-| `opencode` | `~/.config/opencode/` | `AGENTS.md` (core), `rules/{filename}`, `skills/` (frontmatter stripped)  |
+| `opencode` | `~/.config/opencode/` | `AGENTS.md` (core), `rules/`, `skills/`, `agents/` (frontmatter adapted)  |
 | `copilot`  | `~/.copilot/`         | `copilot-instructions.md` (concat)                                        |
 | `windsurf` | `~/.codeium/windsurf/memories/` | `global_rules.md` (concat, 6k-char cap; Windsurf is Devin Desktop by Cognition now — same paths) |
 | `antigravity` | `~/.gemini/`       | `GEMINI.md` (concat)                                                      |
