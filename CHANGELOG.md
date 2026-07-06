@@ -2,9 +2,41 @@
 
 All notable changes to friday are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0] — 2026-07-06
 
-_Nothing yet._
+The developer-os integration release: friday now consumes knowledge repos authored as Claude Code plugins, passes user-level knowledge down into projects interactively, and lands the bulk of the roadmap.
+
+### Added
+- **`replace:` rule transform** — literal string rewriting on push, inverted on pull. Presets use it to rewrite `${CLAUDE_PLUGIN_ROOT}` (the Claude plugin path variable) to `~/.friday`, so plugin-shaped knowledge repos like developer-os work unmodified.
+- **`friday setup`** — interactive project-level apply: pick an agent, pick knowledge from `~/.friday` (core / rules / agents / commands / skills), and friday writes it into the project's git-tracked config (`CLAUDE.md`, `.claude/…`, `.opencode/…`, `.github/copilot-instructions.md`). No project `.friday` folder — the project's git does the versioning.
+- `friday init --from-git URL` — alias of `--remote`.
+- `friday sync` — pull then push in one command.
+- `friday import <adapter|dir>` — bootstrap or enrich `~/.friday` from an existing agent installation, including files authored directly in target dirs (which `pull` cannot see).
+- `friday compile --from X --to Y` — one-shot conversion between agent formats via a throwaway store; lossy conversions require `--allow-lossy` and print a loss summary.
+- `friday explain <target-file>` — which adapter + rule produces a file, from which sources.
+- `friday rollback` — every push records a snapshot (content-addressed blobs + journal, last 10 kept); rollback restores the pre-push target state.
+- **Three-way merge** — conflict prompts offer `[m]` when the last-synced base is recoverable from the snapshot store; clean merges apply directly, overlapping edits offer git-style conflict markers.
+- **Bidirectional drift detection on pull** — canonical-side baselines mean pull now prompts instead of silently eating store edits when both sides changed.
+- `friday status --json` — machine-readable output; exits 2 on conflicts for CI gating.
+- `friday completion bash|zsh|fish` — scripts delegate to a hidden `__complete` callback generated from the command registry, so completions can never drift from the binary.
+- `friday remote init <url>` — set origin on an already-scaffolded store.
+- `friday promote [paths...]` — setup's inverse: capture project-level agent config (e.g. a skill a teammate hand-added under `.claude/skills/`) up into `~/.friday`, with optional path filters and `--propose -m "..."` to chain straight into an MR. Concatenated instruction files are irreversible and reported as unsupported; `${CLAUDE_PLUGIN_ROOT}` markers are restored on the way up.
+- `friday remote propose -m "..."` — review-first publishing for team stores: pushes the working tree as an ephemeral commit to a new remote branch (default `friday/propose-<timestamp>`) and opens an MR against the remote's HEAD branch via GitLab push options (other forges print their PR link). The local branch, history, and working tree stay untouched; after the MR merges, `friday remote pull` fast-forwards and the local edits coincide with the merged content.
+- `friday push --only <glob>` — push only changes sourced from matching store files.
+- `friday plugin list|validate` — out-of-tree YAML presets in `~/.friday/plugins/`, layered between built-ins and `friday.yaml`.
+- `friday lint` — malformed frontmatter, oversized files, broken relative refs, destination collisions.
+- `friday eject` — capture targets into the store, then remove friday's bookkeeping (manifest, drift cache, snapshots).
+- `windsurf` preset (`~/.codeium/windsurf/memories/global_rules.md`; Windsurf is Devin Desktop by Cognition since June 2026 — paths unchanged).
+- `antigravity` preset — Google Antigravity global rules at `~/.gemini/GEMINI.md`; project scope writes the root `AGENTS.md`.
+- `pi` preset — pi coding agent: `~/.pi/agent/AGENTS.md` + `~/.pi/agent/skills/` (Agent Skills standard, Claude-shaped SKILL.md works as-is); project scope writes root `AGENTS.md` + `.pi/skills/`.
+- `friday doctor` now reports the entry-file variant in use, warns on multiple variants, and explains how to wire a store's `hooks/hooks.json` into Claude Code.
+
+### Changed
+- **The canonical entry file is `core.md`** (also matched at `core/core.md`); `identity.md` keeps working as a legacy name. `friday init --scaffold` now writes `core.md`.
+- `friday pull <adapter>` now uses the same per-adapter diff + confirm flow as bare `friday pull`; the legacy batch flow remains behind `--no-interactive`.
+- `friday status` exits 2 when conflicts are present (was always 0).
+- Copy rules with multi-pattern from-lists report `missing-source` per rule instead of per pattern.
+- Docs now reference developer-os-style knowledge repos instead of dotai.
 
 ## [0.0.4] — 2026-05-12
 
