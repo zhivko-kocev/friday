@@ -115,6 +115,7 @@ adapters:
         separator: <string>                # concatenate-only; default "\n\n---\n\n"
         frontmatter_strip: [<key>, ...]    # strip listed YAML frontmatter keys
         replace: {<literal>: <literal>}    # rewrite on push, inverted on pull
+        max_bytes: <int>                   # warn when the output exceeds the agent's limit
 ```
 
 `replace` substitutes literal strings in file content: keys → values on push,

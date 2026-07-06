@@ -26,6 +26,11 @@ type Rule struct {
 	Separator        string            `yaml:"separator,omitempty"`
 	FrontmatterStrip []string          `yaml:"frontmatter_strip,omitempty"`
 	Replace          map[string]string `yaml:"replace,omitempty"`
+	// MaxBytes flags outputs larger than the agent can consume (e.g.
+	// Windsurf caps global_rules.md at 6000 chars). Friday still writes the
+	// file — the agent's truncation behavior is its own — but every push
+	// and status report carries the warning. 0 = no limit.
+	MaxBytes int `yaml:"max_bytes,omitempty"`
 }
 
 // FromSpec accepts either a single string or a list of strings in YAML.
@@ -79,6 +84,9 @@ func (r *Rule) Normalize() error {
 	}
 	if r.Strategy == StrategyConcatenate && hasToken(r.To) {
 		return fmt.Errorf("concatenate rule.to %q cannot contain tokens (single output file)", r.To)
+	}
+	if r.MaxBytes < 0 {
+		return fmt.Errorf("max_bytes cannot be negative")
 	}
 	// Replace must stay invertible: pull maps values back to keys, so every
 	// value must round-trip to exactly one key and neither side may be empty.

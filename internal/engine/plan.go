@@ -76,6 +76,9 @@ func planConcatenate(adapterName string, r *rules.Rule, storeAbs, targetAbs stri
 		return ch, nil
 	}
 	ch.NewContent = bytes.Join(parts, []byte(r.Sep()))
+	if r.MaxBytes > 0 && len(ch.NewContent) > r.MaxBytes {
+		ch.Reason = fmt.Sprintf("%d bytes exceeds the agent's %d-byte limit — it may truncate or ignore this file; trim the from-list", len(ch.NewContent), r.MaxBytes)
+	}
 	old, err := os.ReadFile(dest)
 	switch {
 	case os.IsNotExist(err):

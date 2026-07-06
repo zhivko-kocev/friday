@@ -288,6 +288,7 @@ var registry = map[string]Preset{
 				To:       "memories/global_rules.md",
 				Strategy: rules.StrategyConcatenate,
 				Replace:  storeReplace,
+				MaxBytes: 6000,
 			},
 			{From: rules.FromSpec{"commands/*.md"}, To: "global_workflows/{filename}", Replace: storeReplace},
 			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}", Replace: storeReplace},

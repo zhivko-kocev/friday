@@ -3,6 +3,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zhivko-kocev/friday/internal/config"
@@ -298,5 +299,31 @@ func TestPlanPullMissingTargetSkipped(t *testing.T) {
 	// Target file doesn't exist — nothing to pull, no entries.
 	if len(changes) != 0 {
 		t.Errorf("got %+v, want zero changes", changes)
+	}
+}
+
+func TestPlanConcatenateMaxBytesWarning(t *testing.T) {
+	storeAbs, targetAbs := scaffold(t, map[string]string{"core.md": strings.Repeat("x", 100)})
+	ad := &config.Adapter{
+		Target: targetAbs,
+		Rules: []*rules.Rule{
+			{From: rules.FromSpec{"core.md"}, To: "out.md", Strategy: rules.StrategyConcatenate, MaxBytes: 50},
+		},
+	}
+	changes, err := planPush("test", ad, storeAbs, targetAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Action != ActionCreate {
+		t.Fatalf("got %+v", changes)
+	}
+	if !strings.Contains(changes[0].Reason, "exceeds") {
+		t.Errorf("Reason = %q, want the over-limit warning", changes[0].Reason)
+	}
+	// Under the limit: no warning.
+	ad.Rules[0].MaxBytes = 200
+	changes, _ = planPush("test", ad, storeAbs, targetAbs)
+	if changes[0].Reason != "" {
+		t.Errorf("Reason = %q, want none under the limit", changes[0].Reason)
 	}
 }
