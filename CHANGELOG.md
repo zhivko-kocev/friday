@@ -2,9 +2,12 @@
 
 All notable changes to friday are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] — 2026-07-06
+
+The capability-matrix release: every store directory maps into every agent that has a documented place for it.
 
 ### Added
+- `max_bytes` rule field — flags concatenated outputs larger than the agent can consume; the warning rides every push/status line. The windsurf preset sets it to Windsurf's documented 6000-char `global_rules.md` cap.
 - **Full capability-matrix presets** — every store directory now maps into every agent with a documented place for it (all paths re-verified against current harness docs): codex gains `skills/` (Agent Skills standard) and `prompts/` (from `commands/`); copilot gains `skills/`, custom agents as `agents/*.agent.md`, and project-scope `.github/skills/` + `.github/agents/`; opencode gains `commands/` and adapted `agents/`; windsurf gains `global_workflows/` (target moved from `~/.codeium/windsurf/memories` up to `~/.codeium/windsurf`); antigravity gains `antigravity/global_workflows/`; pi gains `prompts/`. `standards/` and `connectors/` land as reference copies in every agent's config home; claude re-gains the `hooks/` reference copy. Agent frontmatter is adapted per dialect (opencode/copilot strip Claude's `tools` comma-list and `model` sentinels; copilot keeps `name`, opencode derives it from the filename).
 - `friday setup` / `friday promote` catalogs now include `standards`, `connectors`, and `hooks` as selectable items.
 
