@@ -33,20 +33,23 @@ type Options struct {
 }
 
 // Item is one selectable piece of the store: the entry file, a single rule /
-// agent / command file, or a whole skill directory.
+// agent / command / standard / connector file, a whole skill directory, or
+// the hooks tree.
 type Item struct {
-	Category string   // core | rules | agents | commands | skills
+	Category string   // core | rules | agents | commands | standards | connectors | skills | hooks
 	Name     string   // display name (file stem or skill dir)
 	Patterns []string // store-relative from-patterns selecting the item
 	Probe    string   // a real store-relative file, used to test rule coverage
 }
 
 // catalogSpecs drive per-file item discovery; skills are handled separately
-// (one item per skill directory).
+// (one item per skill directory), hooks as a single item.
 var catalogSpecs = []struct{ category, glob string }{
 	{"rules", "rules/*.md"},
 	{"agents", "agents/*.md"},
 	{"commands", "commands/*.md"},
+	{"standards", "standards/*.md"},
+	{"connectors", "connectors/*.md"},
 }
 
 // Catalog enumerates what the store offers, in stable display order.
@@ -89,6 +92,11 @@ func Catalog(storeDir string) ([]Item, error) {
 			continue
 		}
 		items = append(items, Item{Category: "skills", Name: e.Name(), Patterns: []string{pat}, Probe: matches[0]})
+	}
+	if hooks, err := rules.Expand(storeDir, "hooks/**/*"); err != nil {
+		return nil, err
+	} else if len(hooks) > 0 {
+		items = append(items, Item{Category: "hooks", Name: "hooks", Patterns: []string{"hooks/**/*"}, Probe: hooks[0]})
 	}
 	return items, nil
 }

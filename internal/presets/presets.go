@@ -54,14 +54,30 @@ func entryPlus(more ...string) rules.FromSpec {
 const pluginRootMarker = "${CLAUDE_PLUGIN_ROOT}"
 
 // storeReplace rewrites the marker to the canonical store, which always
-// exists on a machine running friday and holds every referenced file
-// (core/, standards/, hooks/, ...). Presets deliberately do NOT rewrite to
-// the adapter's own dir: agent content legitimately mentions paths like
-// ~/.claude/..., and pull's textual inverse would corrupt those; ~/.friday
-// never occurs naturally in a friday-free knowledge repo. It follows that
-// only files agents DISCOVER (skills/, agents/, commands/, the concatenated
-// instructions) need copying — everything else is reached by reference.
+// exists on a machine running friday and holds every referenced file.
+// Presets deliberately do NOT rewrite to the adapter's own dir: agent
+// content legitimately mentions paths like ~/.claude/..., and pull's
+// textual inverse would corrupt those; ~/.friday never occurs naturally in
+// a friday-free knowledge repo.
 var storeReplace = map[string]string{pluginRootMarker: "~/.friday"}
+
+// The presets map every store directory into every agent that has a
+// documented place for it (paths verified against each harness's docs,
+// July 2026):
+//
+//	store        claude     codex     copilot            opencode   windsurf           antigravity                 pi
+//	core+rules   CLAUDE.md  AGENTS.md copilot-instr..md  AGENTS.md  memories/global..  GEMINI.md                   AGENTS.md
+//	agents/      agents/    —         agents/*.agent.md  agents/    —                  —                           —
+//	commands/    commands/  prompts/  —                  commands/  global_workflows/  antigravity/global_workfl.  prompts/
+//	skills/      skills/    skills/   skills/            skills/    —                  —                           skills/
+//	standards/   ✓          ✓         ✓                  ✓          ✓                  ✓                           ✓
+//	connectors/  ✓          ✓         ✓                  ✓          ✓                  ✓                           ✓
+//	hooks/       hooks/     —         —                  —          —                  —                           —
+//
+// standards/ and connectors/ have no native discovery mechanism anywhere, so
+// they land as reference copies in each agent's config home; the live copies
+// referenced by skill bodies stay in ~/.friday. "—" means the harness has no
+// documented surface for that content.
 
 var registry = map[string]Preset{
 	"claude": {
@@ -77,6 +93,11 @@ var registry = map[string]Preset{
 			{From: rules.FromSpec{"agents/*.md"}, To: "agents/{filename}", Replace: storeReplace},
 			{From: rules.FromSpec{"commands/*.md"}, To: "commands/{filename}", Replace: storeReplace},
 			{From: rules.FromSpec{"skills/**/*"}, To: "skills/{relpath}", Replace: storeReplace},
+			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}", Replace: storeReplace},
+			// Reference copy: Claude Code only auto-loads plugin hooks; wire
+			// entries into ~/.claude/settings.json by hand (doctor explains).
+			{From: rules.FromSpec{"hooks/**/*"}, To: "hooks/{relpath}", Replace: storeReplace},
 		},
 		// Claude Code reads ./CLAUDE.md at the repo root and discovers
 		// agents/commands/skills under ./.claude/.
@@ -92,6 +113,9 @@ var registry = map[string]Preset{
 			{From: rules.FromSpec{"agents/*.md"}, To: ".claude/agents/{filename}", Replace: storeReplace},
 			{From: rules.FromSpec{"commands/*.md"}, To: ".claude/commands/{filename}", Replace: storeReplace},
 			{From: rules.FromSpec{"skills/**/*"}, To: ".claude/skills/{relpath}", Replace: storeReplace},
+			{From: rules.FromSpec{"standards/*.md"}, To: ".claude/standards/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"connectors/*.md"}, To: ".claude/connectors/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"hooks/**/*"}, To: ".claude/hooks/{relpath}", Replace: storeReplace},
 		},
 	},
 	// Cursor user-level rules live inside Cursor's settings UI, not on the
@@ -111,8 +135,12 @@ var registry = map[string]Preset{
 	//   - Codeium (non-Windsurf) has no filesystem instruction path.
 	"codex": {
 		Name: "codex",
-		// Codex CLI reads ~/.codex/AGENTS.md (and AGENTS.override.md if present).
+		// Codex CLI reads ~/.codex/AGENTS.md, discovers Agent-Skills-standard
+		// skills under ~/.codex/skills/**/SKILL.md, and scans top-level
+		// markdown in ~/.codex/prompts/ as custom prompts (deprecated in
+		// favor of skills, still supported).
 		// https://developers.openai.com/codex/guides/agents-md
+		// https://developers.openai.com/codex/custom-prompts
 		Target: ".codex",
 		Rules: []*rules.Rule{
 			{
@@ -121,6 +149,10 @@ var registry = map[string]Preset{
 				Strategy: rules.StrategyConcatenate,
 				Replace:  storeReplace,
 			},
+			{From: rules.FromSpec{"skills/**/*"}, To: "skills/{relpath}", Replace: storeReplace},
+			{From: rules.FromSpec{"commands/*.md"}, To: "prompts/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}", Replace: storeReplace},
 		},
 		// Codex reads AGENTS.md at the repo root at project scope.
 		// https://developers.openai.com/codex/guides/agents-md
@@ -160,6 +192,11 @@ var registry = map[string]Preset{
 				FrontmatterStrip: []string{"name", "tools", "model"},
 				Replace:          storeReplace,
 			},
+			// Custom commands: markdown with $ARGUMENTS, same dialect as
+			// Claude's. https://opencode.ai/docs/commands/
+			{From: rules.FromSpec{"commands/*.md"}, To: "commands/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}", Replace: storeReplace},
 		},
 		// OpenCode reads AGENTS.md at the repo root and discovers project
 		// skills and agents under ./.opencode/. https://opencode.ai/docs/skills/
@@ -183,13 +220,21 @@ var registry = map[string]Preset{
 				FrontmatterStrip: []string{"name", "tools", "model"},
 				Replace:          storeReplace,
 			},
+			{From: rules.FromSpec{"commands/*.md"}, To: ".opencode/commands/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"standards/*.md"}, To: ".opencode/standards/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"connectors/*.md"}, To: ".opencode/connectors/{filename}", Replace: storeReplace},
 		},
 	},
 	"copilot": {
 		Name: "copilot",
-		// Copilot CLI reads ~/.copilot/copilot-instructions.md. VS Code Copilot
-		// honors the same path via chat.instructionsFilesLocations.
+		// Copilot CLI reads ~/.copilot/copilot-instructions.md, discovers
+		// Agent-Skills-standard skills in ~/.copilot/skills/, and custom
+		// agents as ~/.copilot/agents/*.agent.md (name/description in
+		// frontmatter; Claude's tools comma-list and model sentinels don't
+		// translate, so they're stripped).
 		// https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions
+		// https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills
+		// https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli
 		Target: ".copilot",
 		Rules: []*rules.Rule{
 			{
@@ -198,8 +243,18 @@ var registry = map[string]Preset{
 				Strategy: rules.StrategyConcatenate,
 				Replace:  storeReplace,
 			},
+			{From: rules.FromSpec{"skills/**/*"}, To: "skills/{relpath}", Replace: storeReplace},
+			{
+				From:             rules.FromSpec{"agents/*.md"},
+				To:               "agents/{stem}.agent.md",
+				FrontmatterStrip: []string{"tools", "model"},
+				Replace:          storeReplace,
+			},
+			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}", Replace: storeReplace},
 		},
-		// Copilot reads .github/copilot-instructions.md at project scope.
+		// Project scope: .github/copilot-instructions.md, .github/skills/,
+		// and repo-level custom agents in .github/agents/*.agent.md.
 		// https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions
 		ProjectTarget: ".",
 		ProjectRules: []*rules.Rule{
@@ -209,27 +264,37 @@ var registry = map[string]Preset{
 				Strategy: rules.StrategyConcatenate,
 				Replace:  storeReplace,
 			},
+			{From: rules.FromSpec{"skills/**/*"}, To: ".github/skills/{relpath}", Replace: storeReplace},
+			{
+				From:             rules.FromSpec{"agents/*.md"},
+				To:               ".github/agents/{stem}.agent.md",
+				FrontmatterStrip: []string{"tools", "model"},
+				Replace:          storeReplace,
+			},
 		},
 	},
 	"windsurf": {
 		Name: "windsurf",
 		// Windsurf (rebranded Devin Desktop by Cognition, June 2026; the
-		// docs and paths still say windsurf) reads user-level rules from a
-		// single global_rules.md capped at 6000 characters — keep core.md +
-		// rules lean or trim the manifest's from-list.
+		// docs and paths still say windsurf). Global rules are a single
+		// memories/global_rules.md capped at 6000 characters — keep core.md
+		// + rules lean. User workflows live in global_workflows/.
 		// https://docs.windsurf.com/windsurf/cascade/memories
-		Target: ".codeium/windsurf/memories",
+		// https://docs.windsurf.com/windsurf/cascade/workflows
+		Target: ".codeium/windsurf",
 		Rules: []*rules.Rule{
 			{
 				From:     entryPlus("rules/*.md"),
-				To:       "global_rules.md",
+				To:       "memories/global_rules.md",
 				Strategy: rules.StrategyConcatenate,
 				Replace:  storeReplace,
 			},
+			{From: rules.FromSpec{"commands/*.md"}, To: "global_workflows/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}", Replace: storeReplace},
 		},
 		// At project scope it honors a root AGENTS.md (always-on, no
-		// frontmatter); current builds prefer .devin/rules/ for split rule
-		// files, but the single AGENTS.md is the cross-tool safe bet.
+		// frontmatter) and workspace workflows in .windsurf/workflows/.
 		ProjectTarget: ".",
 		ProjectRules: []*rules.Rule{
 			{
@@ -238,14 +303,17 @@ var registry = map[string]Preset{
 				Strategy: rules.StrategyConcatenate,
 				Replace:  storeReplace,
 			},
+			{From: rules.FromSpec{"commands/*.md"}, To: ".windsurf/workflows/{filename}", Replace: storeReplace},
 		},
 	},
 	"antigravity": {
 		Name: "antigravity",
 		// Google Antigravity reads global rules from ~/.gemini/GEMINI.md
 		// (and, since v1.20.3, the cross-tool ~/.gemini/AGENTS.md, applied
-		// after GEMINI.md). Workspace rules live in .agent/rules/ but a root
-		// AGENTS.md is read by every agent in the workspace.
+		// after GEMINI.md). Global workflows live under
+		// ~/.gemini/antigravity/global_workflows/; workspace rules in
+		// .agent/rules/, workspace workflows in .agent/workflows/, and a
+		// root AGENTS.md is read by every agent in the workspace.
 		// https://codelabs.developers.google.com/getting-started-google-antigravity
 		Target: ".gemini",
 		Rules: []*rules.Rule{
@@ -255,6 +323,9 @@ var registry = map[string]Preset{
 				Strategy: rules.StrategyConcatenate,
 				Replace:  storeReplace,
 			},
+			{From: rules.FromSpec{"commands/*.md"}, To: "antigravity/global_workflows/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}", Replace: storeReplace},
 		},
 		ProjectTarget: ".",
 		ProjectRules: []*rules.Rule{
@@ -264,6 +335,7 @@ var registry = map[string]Preset{
 				Strategy: rules.StrategyConcatenate,
 				Replace:  storeReplace,
 			},
+			{From: rules.FromSpec{"commands/*.md"}, To: ".agent/workflows/{filename}", Replace: storeReplace},
 		},
 	},
 	"pi": {
@@ -282,8 +354,14 @@ var registry = map[string]Preset{
 				Replace:  storeReplace,
 			},
 			{From: rules.FromSpec{"skills/**/*"}, To: "skills/{relpath}", Replace: storeReplace},
+			// Pi prompt templates are markdown files invoked as /name —
+			// the closest surface to Claude slash commands.
+			{From: rules.FromSpec{"commands/*.md"}, To: "prompts/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}", Replace: storeReplace},
 		},
-		// Project scope: root AGENTS.md (loaded cwd-up) + .pi/skills/.
+		// Project scope: root AGENTS.md (loaded cwd-up) + .pi/skills/ +
+		// .pi/prompts/.
 		ProjectTarget: ".",
 		ProjectRules: []*rules.Rule{
 			{
@@ -293,6 +371,7 @@ var registry = map[string]Preset{
 				Replace:  storeReplace,
 			},
 			{From: rules.FromSpec{"skills/**/*"}, To: ".pi/skills/{relpath}", Replace: storeReplace},
+			{From: rules.FromSpec{"commands/*.md"}, To: ".pi/prompts/{filename}", Replace: storeReplace},
 		},
 	},
 }

@@ -49,23 +49,37 @@ func TestPresetsEntryFilesAndReplace(t *testing.T) {
 	}
 }
 
-// The claude preset copies exactly what Claude Code discovers on disk;
-// everything else in a knowledge repo (core/, standards/, hooks/) is reached
-// via the ~/.friday references the replace transform writes.
-func TestClaudePresetCoversDiscoveryDirs(t *testing.T) {
-	p, _ := Get("claude")
-	dests := make(map[string]bool, len(p.Rules))
-	for _, r := range p.Rules {
-		dests[r.To] = true
+// Every store directory maps into every agent that has a documented place
+// for it — the capability matrix in presets.go, verified here per preset by
+// which store patterns its rules consume.
+func TestPresetCapabilityMatrix(t *testing.T) {
+	want := map[string][]string{
+		"claude":      {"rules/*.md", "agents/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md", "hooks/**/*"},
+		"codex":       {"rules/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
+		"copilot":     {"rules/*.md", "agents/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
+		"opencode":    {"rules/*.md", "agents/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
+		"windsurf":    {"rules/*.md", "commands/*.md", "standards/*.md", "connectors/*.md"},
+		"antigravity": {"rules/*.md", "commands/*.md", "standards/*.md", "connectors/*.md"},
+		"pi":          {"rules/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
 	}
-	for _, want := range []string{"CLAUDE.md", "agents/{filename}", "commands/{filename}", "skills/{relpath}"} {
-		if !dests[want] {
-			t.Errorf("claude preset missing rule writing %s (have %v)", want, dests)
+	for name, patterns := range want {
+		p, ok := Get(name)
+		if !ok {
+			t.Fatalf("preset %s missing", name)
 		}
-	}
-	for _, unwanted := range []string{"standards/{filename}", "hooks/{relpath}", "core/core.md"} {
-		if dests[unwanted] {
-			t.Errorf("claude preset copies %s — non-discovery content must stay in the store", unwanted)
+		consumed := map[string]bool{}
+		for _, r := range p.Rules {
+			for _, f := range r.From {
+				consumed[f] = true
+			}
+		}
+		if !consumed["core.md"] {
+			t.Errorf("%s: entry file not consumed", name)
+		}
+		for _, pat := range patterns {
+			if !consumed[pat] {
+				t.Errorf("%s: store pattern %s not mapped (have %v)", name, pat, consumed)
+			}
 		}
 	}
 }

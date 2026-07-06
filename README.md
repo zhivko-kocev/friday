@@ -125,21 +125,26 @@ friday.yaml          Adapter manifest. Auto-seeded by `friday init` with all fou
 
 ## Built-in presets
 
-| Preset     | Target dir            | Output                                                                    |
-| ---------- | --------------------- | ------------------------------------------------------------------------- |
-| `claude`   | `~/.claude/`          | `CLAUDE.md` (concat), `agents/`, `commands/`, `skills/`                   |
-| `codex`    | `~/.codex/`           | `AGENTS.md` (concat)                                                      |
-| `opencode` | `~/.config/opencode/` | `AGENTS.md` (core), `rules/`, `skills/`, `agents/` (frontmatter adapted)  |
-| `copilot`  | `~/.copilot/`         | `copilot-instructions.md` (concat)                                        |
-| `windsurf` | `~/.codeium/windsurf/memories/` | `global_rules.md` (concat, 6k-char cap; Windsurf is Devin Desktop by Cognition now — same paths) |
-| `antigravity` | `~/.gemini/`       | `GEMINI.md` (concat)                                                      |
-| `pi`       | `~/.pi/agent/`        | `AGENTS.md` (concat), `skills/` (Agent Skills standard)                   |
+Every store directory maps into every agent that has a documented place for
+it (paths verified against each harness's docs):
 
-Presets copy what each agent *discovers* on disk. Everything else in the store
-(`core/`, `standards/`, `hooks/`, ...) stays in `~/.friday` and is reached by
-reference: every rule rewrites the Claude-plugin path variable
-`${CLAUDE_PLUGIN_ROOT}` to `~/.friday` on push (and back on pull), so knowledge
-repos authored as Claude Code plugins — like developer-os — work unmodified.
+| Store dir     | `claude`<br>`~/.claude` | `codex`<br>`~/.codex` | `copilot`<br>`~/.copilot` | `opencode`<br>`~/.config/opencode` | `windsurf`<br>`~/.codeium/windsurf` | `antigravity`<br>`~/.gemini` | `pi`<br>`~/.pi/agent` |
+| ------------- | ----------- | ---------- | ------------------ | ----------- | -------------------- | ----------------------- | ---------- |
+| core + rules  | `CLAUDE.md` | `AGENTS.md`| `copilot-instructions.md` | `AGENTS.md` + `rules/` | `memories/global_rules.md` | `GEMINI.md` | `AGENTS.md` |
+| `agents/`     | `agents/`   | —          | `agents/*.agent.md`| `agents/`†  | —                    | —                       | —          |
+| `commands/`   | `commands/` | `prompts/` | —                  | `commands/` | `global_workflows/`  | `antigravity/global_workflows/` | `prompts/` |
+| `skills/`     | `skills/`   | `skills/`  | `skills/`          | `skills/`†  | —                    | —                       | `skills/`  |
+| `standards/`  | ✓           | ✓          | ✓                  | ✓           | ✓                    | ✓                       | ✓          |
+| `connectors/` | ✓           | ✓          | ✓                  | ✓           | ✓                    | ✓                       | ✓          |
+| `hooks/`      | `hooks/`    | —          | —                  | —           | —                    | —                       | —          |
+
+† frontmatter adapted to the harness's dialect. `—` means the harness has no
+documented surface for that content. `standards/` and `connectors/` have no
+native discovery mechanism anywhere, so they land as reference copies in each
+agent's config home. Every rule rewrites the Claude-plugin path variable
+`${CLAUDE_PLUGIN_ROOT}` to `~/.friday` on push (and back on pull), so
+knowledge repos authored as Claude Code plugins — like developer-os — work
+unmodified, and cross-references always resolve against the store.
 
 Paths verified against each agent's current documentation (Claude Code, [Codex CLI](https://developers.openai.com/codex/guides/agents-md), [OpenCode](https://opencode.ai/docs/config/), [Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions)).
 

@@ -5,7 +5,8 @@ All notable changes to friday are documented here. The format follows [Keep a Ch
 ## [Unreleased]
 
 ### Added
-- `opencode` preset now maps `agents/*.md` → `agents/{filename}` (and `.opencode/agents/` at project scope), adapting the frontmatter: `name` (filename-derived there), Claude's comma-list `tools`, and Claude's `model` sentinels are stripped; `description` and `color` carry over. Tool boundaries don't translate — use `permission` in `opencode.json` if you need them.
+- **Full capability-matrix presets** — every store directory now maps into every agent with a documented place for it (all paths re-verified against current harness docs): codex gains `skills/` (Agent Skills standard) and `prompts/` (from `commands/`); copilot gains `skills/`, custom agents as `agents/*.agent.md`, and project-scope `.github/skills/` + `.github/agents/`; opencode gains `commands/` and adapted `agents/`; windsurf gains `global_workflows/` (target moved from `~/.codeium/windsurf/memories` up to `~/.codeium/windsurf`); antigravity gains `antigravity/global_workflows/`; pi gains `prompts/`. `standards/` and `connectors/` land as reference copies in every agent's config home; claude re-gains the `hooks/` reference copy. Agent frontmatter is adapted per dialect (opencode/copilot strip Claude's `tools` comma-list and `model` sentinels; copilot keeps `name`, opencode derives it from the filename).
+- `friday setup` / `friday promote` catalogs now include `standards`, `connectors`, and `hooks` as selectable items.
 
 ## [0.1.0] — 2026-07-06
 
