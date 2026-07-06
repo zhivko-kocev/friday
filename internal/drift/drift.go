@@ -74,8 +74,28 @@ func (s *Store) vacuum() {
 
 func (s *Store) key(adapter, absPath string) string { return adapter + ":" + absPath }
 
+// canonicalAdapter is the reserved pseudo-adapter that keys store-side
+// (canonical) baselines. "~" can never open a real adapter name —
+// config.load rejects it — so these entries coexist with target baselines
+// in the same flat map, and vacuum/keying work unchanged.
+const canonicalAdapter = "~canonical"
+
 func (s *Store) Set(adapter, absPath string, content []byte) {
 	s.hashes[s.key(adapter, absPath)] = hash(content)
+}
+
+// SetCanonical records the content of a store file at a sync point (push
+// read it, or pull wrote it). Pull consults this baseline to detect edits
+// made to the canonical side since the last sync.
+func (s *Store) SetCanonical(absPath string, content []byte) {
+	s.Set(canonicalAdapter, absPath, content)
+}
+
+// CheckCanonical reports whether a store file changed since the last
+// recorded sync point. A file with no baseline reports drifted — the
+// conservative reading, matching Check's stance on unknown target files.
+func (s *Store) CheckCanonical(absPath string) (drifted, exists bool) {
+	return s.Check(canonicalAdapter, absPath)
 }
 
 // Check reports whether an on-disk file has drifted from what friday last wrote.
@@ -95,6 +115,22 @@ func (s *Store) Check(adapter, absPath string) (drifted, exists bool) {
 	}
 	return hash(data) != stored, true
 }
+
+// BaselineHash returns the recorded hash for a target file, or "" when none
+// is known. The snapshot blob store is keyed by the same hash, which is what
+// lets a conflict prompt recover the last-synced content for a 3-way merge.
+func (s *Store) BaselineHash(adapter, absPath string) string {
+	return s.hashes[s.key(adapter, absPath)]
+}
+
+// CanonicalBaselineHash returns the recorded hash for a store file, or "".
+func (s *Store) CanonicalBaselineHash(absPath string) string {
+	return s.hashes[s.key(canonicalAdapter, absPath)]
+}
+
+// Hash exposes the baseline hash function (SHA256 over newline-normalized
+// content) so the snapshot blob store can address blobs compatibly.
+func Hash(data []byte) string { return hash(data) }
 
 // hash returns the SHA256 of the content after newline normalization, so
 // two files that differ only in line endings hash identically.
