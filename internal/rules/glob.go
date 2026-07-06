@@ -80,6 +80,13 @@ func Expand(storeRoot, pattern string) ([]string, error) {
 	return matches, nil
 }
 
+// Match reports whether a store-relative path matches a from-pattern,
+// without touching the filesystem. Same semantics as Expand, including the
+// dotfile opt-in convention.
+func Match(pattern, path string) bool {
+	return matchPath(filepath.ToSlash(pattern), filepath.ToSlash(path))
+}
+
 // matchPath returns true if path matches pattern.
 //
 //   - — any sequence except /

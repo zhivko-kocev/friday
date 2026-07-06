@@ -20,11 +20,12 @@ const (
 
 // Rule describes a single from→to mapping inside an adapter.
 type Rule struct {
-	From             FromSpec `yaml:"from"`
-	To               string   `yaml:"to"`
-	Strategy         string   `yaml:"strategy,omitempty"`
-	Separator        string   `yaml:"separator,omitempty"`
-	FrontmatterStrip []string `yaml:"frontmatter_strip,omitempty"`
+	From             FromSpec          `yaml:"from"`
+	To               string            `yaml:"to"`
+	Strategy         string            `yaml:"strategy,omitempty"`
+	Separator        string            `yaml:"separator,omitempty"`
+	FrontmatterStrip []string          `yaml:"frontmatter_strip,omitempty"`
+	Replace          map[string]string `yaml:"replace,omitempty"`
 }
 
 // FromSpec accepts either a single string or a list of strings in YAML.
@@ -78,6 +79,24 @@ func (r *Rule) Normalize() error {
 	}
 	if r.Strategy == StrategyConcatenate && hasToken(r.To) {
 		return fmt.Errorf("concatenate rule.to %q cannot contain tokens (single output file)", r.To)
+	}
+	// Replace must stay invertible: pull maps values back to keys, so every
+	// value must round-trip to exactly one key and neither side may be empty.
+	seen := make(map[string]string, len(r.Replace))
+	for k, v := range r.Replace {
+		if k == "" {
+			return fmt.Errorf("replace key cannot be empty")
+		}
+		if v == "" {
+			return fmt.Errorf("replace %q cannot map to an empty string (not invertible)", k)
+		}
+		if k == v {
+			return fmt.Errorf("replace %q maps to itself", k)
+		}
+		if prev, dup := seen[v]; dup {
+			return fmt.Errorf("replace keys %q and %q map to the same value %q (not invertible)", prev, k, v)
+		}
+		seen[v] = k
 	}
 	return nil
 }
