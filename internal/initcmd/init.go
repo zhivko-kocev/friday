@@ -141,7 +141,7 @@ func scaffoldStore(storeAbs string) error {
 			}
 		}
 	}
-	if err := writeIfMissing(filepath.Join(storeAbs, "identity.md"), placeholderIdentity); err != nil {
+	if err := writeIfMissing(filepath.Join(storeAbs, "core.md"), placeholderCore); err != nil {
 		return err
 	}
 	if err := writeIfMissing(filepath.Join(storeAbs, "rules", "general.md"), placeholderRule); err != nil {
@@ -168,12 +168,13 @@ func writeIfMissing(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
-const placeholderIdentity = `# Identity
+const placeholderCore = `# Core
 
 You are an AI assistant helping the user with their work.
 
-Edit this file to describe yourself, your role, and your operating principles.
-This file is concatenated into agent-specific instructions (e.g. CLAUDE.md, AGENTS.md).
+Edit this file to describe the assistant's role and operating principles.
+It leads every agent's generated instructions (CLAUDE.md, AGENTS.md,
+copilot-instructions.md).
 `
 
 const placeholderRule = `---

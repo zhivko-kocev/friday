@@ -17,11 +17,51 @@ type Preset struct {
 	Name   string
 	Target string
 	Rules  []*rules.Rule
+	// ProjectTarget and ProjectRules describe the same agent at project
+	// scope: `friday setup` resolves ProjectTarget against the project dir
+	// ("." for every built-in) and applies ProjectRules, whose To paths
+	// carry the in-repo config-dir prefixes (.claude/, .github/, ...).
+	ProjectTarget string
+	ProjectRules  []*rules.Rule
 }
 
 func (p Preset) Adapter() *config.Adapter {
 	return &config.Adapter{Target: p.Target, Rules: p.Rules}
 }
+
+// ProjectAdapter renders the preset's project-scope shape. Nil rules means
+// the preset has no project-scope story yet.
+func (p Preset) ProjectAdapter() *config.Adapter {
+	return &config.Adapter{Target: p.ProjectTarget, Rules: p.ProjectRules}
+}
+
+// entryFiles are the store entry-file variants, most-preferred first: core.md
+// is the canonical name, core/core.md matches knowledge repos that nest it
+// (e.g. developer-os), identity.md is the legacy pre-0.0.5 name. Absent
+// variants expand to nothing, so listing all three costs nothing; `friday
+// doctor` warns when a store carries more than one.
+var entryFiles = rules.FromSpec{"core.md", "core/core.md", "identity.md"}
+
+// entryPlus returns a fresh from-list of the entry-file variants followed by
+// any extra patterns.
+func entryPlus(more ...string) rules.FromSpec {
+	return append(append(rules.FromSpec{}, entryFiles...), more...)
+}
+
+// pluginRootMarker is the path variable Claude Code plugins use to reference
+// sibling files. Knowledge repos authored as plugins (e.g. developer-os) carry
+// it in skill/agent/standards bodies.
+const pluginRootMarker = "${CLAUDE_PLUGIN_ROOT}"
+
+// storeReplace rewrites the marker to the canonical store, which always
+// exists on a machine running friday and holds every referenced file
+// (core/, standards/, hooks/, ...). Presets deliberately do NOT rewrite to
+// the adapter's own dir: agent content legitimately mentions paths like
+// ~/.claude/..., and pull's textual inverse would corrupt those; ~/.friday
+// never occurs naturally in a friday-free knowledge repo. It follows that
+// only files agents DISCOVER (skills/, agents/, commands/, the concatenated
+// instructions) need copying — everything else is reached by reference.
+var storeReplace = map[string]string{pluginRootMarker: "~/.friday"}
 
 var registry = map[string]Preset{
 	"claude": {
@@ -29,13 +69,29 @@ var registry = map[string]Preset{
 		Target: ".claude",
 		Rules: []*rules.Rule{
 			{
-				From:     rules.FromSpec{"identity.md", "rules/*.md"},
+				From:     entryPlus("rules/*.md"),
 				To:       "CLAUDE.md",
 				Strategy: rules.StrategyConcatenate,
+				Replace:  storeReplace,
 			},
-			{From: rules.FromSpec{"agents/*.md"}, To: "agents/{filename}"},
-			{From: rules.FromSpec{"commands/*.md"}, To: "commands/{filename}"},
-			{From: rules.FromSpec{"skills/**/*"}, To: "skills/{relpath}"},
+			{From: rules.FromSpec{"agents/*.md"}, To: "agents/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"commands/*.md"}, To: "commands/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"skills/**/*"}, To: "skills/{relpath}", Replace: storeReplace},
+		},
+		// Claude Code reads ./CLAUDE.md at the repo root and discovers
+		// agents/commands/skills under ./.claude/.
+		// https://code.claude.com/docs/en/skills
+		ProjectTarget: ".",
+		ProjectRules: []*rules.Rule{
+			{
+				From:     entryPlus("rules/*.md"),
+				To:       "CLAUDE.md",
+				Strategy: rules.StrategyConcatenate,
+				Replace:  storeReplace,
+			},
+			{From: rules.FromSpec{"agents/*.md"}, To: ".claude/agents/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"commands/*.md"}, To: ".claude/commands/{filename}", Replace: storeReplace},
+			{From: rules.FromSpec{"skills/**/*"}, To: ".claude/skills/{relpath}", Replace: storeReplace},
 		},
 	},
 	// Cursor user-level rules live inside Cursor's settings UI, not on the
@@ -44,6 +100,15 @@ var registry = map[string]Preset{
 	// (.cursor/rules/*.mdc) belongs to project scope, which friday does not
 	// support yet. Once Cursor ships filesystem-backed global rules, or
 	// friday gains project scope, this preset can come back.
+	//
+	// Also intentionally absent, for the same reason a wrong preset is worse
+	// than none (it writes junk into home dirs):
+	//   - Continue auto-loads only the workspace .continue/rules/; a global
+	//     ~/.continue/rules is not documented (https://docs.continue.dev/customize/deep-dives/rules).
+	//   - Aider takes context via `read:` entries in ~/.aider.conf.yml, not
+	//     a conventional instructions dir.
+	//   - Zed keeps global rules in its internal Rules Library, not files.
+	//   - Codeium (non-Windsurf) has no filesystem instruction path.
 	"codex": {
 		Name: "codex",
 		// Codex CLI reads ~/.codex/AGENTS.md (and AGENTS.override.md if present).
@@ -51,9 +116,21 @@ var registry = map[string]Preset{
 		Target: ".codex",
 		Rules: []*rules.Rule{
 			{
-				From:     rules.FromSpec{"identity.md", "rules/*.md"},
+				From:     entryPlus("rules/*.md"),
 				To:       "AGENTS.md",
 				Strategy: rules.StrategyConcatenate,
+				Replace:  storeReplace,
+			},
+		},
+		// Codex reads AGENTS.md at the repo root at project scope.
+		// https://developers.openai.com/codex/guides/agents-md
+		ProjectTarget: ".",
+		ProjectRules: []*rules.Rule{
+			{
+				From:     entryPlus("rules/*.md"),
+				To:       "AGENTS.md",
+				Strategy: rules.StrategyConcatenate,
+				Replace:  storeReplace,
 			},
 		},
 	},
@@ -62,12 +139,30 @@ var registry = map[string]Preset{
 		// OpenCode follows XDG: global config at $HOME/.config/opencode.
 		Target: ".config/opencode",
 		Rules: []*rules.Rule{
-			{From: rules.FromSpec{"identity.md"}, To: "AGENTS.md"},
-			{From: rules.FromSpec{"rules/*.md"}, To: "rules/{filename}"},
+			{From: entryPlus(), To: "AGENTS.md", Replace: storeReplace},
+			{From: rules.FromSpec{"rules/*.md"}, To: "rules/{filename}", Replace: storeReplace},
 			{
 				From:             rules.FromSpec{"skills/**/*"},
 				To:               "skills/{relpath}",
 				FrontmatterStrip: []string{"when_to_use", "allowed-tools"},
+				Replace:          storeReplace,
+			},
+		},
+		// OpenCode reads AGENTS.md at the repo root and discovers project
+		// skills under ./.opencode/skills/. https://opencode.ai/docs/skills/
+		ProjectTarget: ".",
+		ProjectRules: []*rules.Rule{
+			{
+				From:     entryPlus("rules/*.md"),
+				To:       "AGENTS.md",
+				Strategy: rules.StrategyConcatenate,
+				Replace:  storeReplace,
+			},
+			{
+				From:             rules.FromSpec{"skills/**/*"},
+				To:               ".opencode/skills/{relpath}",
+				FrontmatterStrip: []string{"when_to_use", "allowed-tools"},
+				Replace:          storeReplace,
 			},
 		},
 	},
@@ -79,10 +174,106 @@ var registry = map[string]Preset{
 		Target: ".copilot",
 		Rules: []*rules.Rule{
 			{
-				From:     rules.FromSpec{"identity.md", "rules/*.md"},
+				From:     entryPlus("rules/*.md"),
 				To:       "copilot-instructions.md",
 				Strategy: rules.StrategyConcatenate,
+				Replace:  storeReplace,
 			},
+		},
+		// Copilot reads .github/copilot-instructions.md at project scope.
+		// https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions
+		ProjectTarget: ".",
+		ProjectRules: []*rules.Rule{
+			{
+				From:     entryPlus("rules/*.md"),
+				To:       ".github/copilot-instructions.md",
+				Strategy: rules.StrategyConcatenate,
+				Replace:  storeReplace,
+			},
+		},
+	},
+	"windsurf": {
+		Name: "windsurf",
+		// Windsurf (rebranded Devin Desktop by Cognition, June 2026; the
+		// docs and paths still say windsurf) reads user-level rules from a
+		// single global_rules.md capped at 6000 characters — keep core.md +
+		// rules lean or trim the manifest's from-list.
+		// https://docs.windsurf.com/windsurf/cascade/memories
+		Target: ".codeium/windsurf/memories",
+		Rules: []*rules.Rule{
+			{
+				From:     entryPlus("rules/*.md"),
+				To:       "global_rules.md",
+				Strategy: rules.StrategyConcatenate,
+				Replace:  storeReplace,
+			},
+		},
+		// At project scope it honors a root AGENTS.md (always-on, no
+		// frontmatter); current builds prefer .devin/rules/ for split rule
+		// files, but the single AGENTS.md is the cross-tool safe bet.
+		ProjectTarget: ".",
+		ProjectRules: []*rules.Rule{
+			{
+				From:     entryPlus("rules/*.md"),
+				To:       "AGENTS.md",
+				Strategy: rules.StrategyConcatenate,
+				Replace:  storeReplace,
+			},
+		},
+	},
+	"antigravity": {
+		Name: "antigravity",
+		// Google Antigravity reads global rules from ~/.gemini/GEMINI.md
+		// (and, since v1.20.3, the cross-tool ~/.gemini/AGENTS.md, applied
+		// after GEMINI.md). Workspace rules live in .agent/rules/ but a root
+		// AGENTS.md is read by every agent in the workspace.
+		// https://codelabs.developers.google.com/getting-started-google-antigravity
+		Target: ".gemini",
+		Rules: []*rules.Rule{
+			{
+				From:     entryPlus("rules/*.md"),
+				To:       "GEMINI.md",
+				Strategy: rules.StrategyConcatenate,
+				Replace:  storeReplace,
+			},
+		},
+		ProjectTarget: ".",
+		ProjectRules: []*rules.Rule{
+			{
+				From:     entryPlus("rules/*.md"),
+				To:       "AGENTS.md",
+				Strategy: rules.StrategyConcatenate,
+				Replace:  storeReplace,
+			},
+		},
+	},
+	"pi": {
+		Name: "pi",
+		// Pi (badlogic/pi-mono) loads the global AGENTS.md from
+		// ~/.pi/agent/AGENTS.md (CLAUDE.md also accepted) and global skills
+		// from ~/.pi/agent/skills/ following the Agent Skills standard —
+		// Claude-shaped SKILL.md files work as-is.
+		// https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent
+		Target: ".pi/agent",
+		Rules: []*rules.Rule{
+			{
+				From:     entryPlus("rules/*.md"),
+				To:       "AGENTS.md",
+				Strategy: rules.StrategyConcatenate,
+				Replace:  storeReplace,
+			},
+			{From: rules.FromSpec{"skills/**/*"}, To: "skills/{relpath}", Replace: storeReplace},
+		},
+		// Project scope: root AGENTS.md (loaded cwd-up) + .pi/skills/.
+		ProjectTarget: ".",
+		ProjectRules: []*rules.Rule{
+			{
+				From:     entryPlus("rules/*.md"),
+				To:       "AGENTS.md",
+				Strategy: rules.StrategyConcatenate,
+				Replace:  storeReplace,
+			},
+			{From: rules.FromSpec{"skills/**/*"}, To: ".pi/skills/{relpath}", Replace: storeReplace},
 		},
 	},
 }
@@ -95,14 +286,29 @@ func Get(name string) (Preset, bool) {
 	}
 	// Return a deep copy of rules so callers can't mutate the registry.
 	clone := p
-	clone.Rules = make([]*rules.Rule, len(p.Rules))
-	for i, r := range p.Rules {
+	clone.Rules = cloneRules(p.Rules)
+	clone.ProjectRules = cloneRules(p.ProjectRules)
+	return clone, true
+}
+
+func cloneRules(rs []*rules.Rule) []*rules.Rule {
+	if rs == nil {
+		return nil
+	}
+	out := make([]*rules.Rule, len(rs))
+	for i, r := range rs {
 		c := *r
 		c.From = append(rules.FromSpec(nil), r.From...)
 		c.FrontmatterStrip = append([]string(nil), r.FrontmatterStrip...)
-		clone.Rules[i] = &c
+		if r.Replace != nil {
+			c.Replace = make(map[string]string, len(r.Replace))
+			for k, v := range r.Replace {
+				c.Replace[k] = v
+			}
+		}
+		out[i] = &c
 	}
-	return clone, true
+	return out
 }
 
 // Names returns all known preset names in alphabetical order.

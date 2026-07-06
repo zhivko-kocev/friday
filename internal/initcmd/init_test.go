@@ -44,7 +44,7 @@ func TestRunScaffoldsOnBlankInput(t *testing.T) {
 	}
 
 	// Skeleton files
-	for _, rel := range []string{"identity.md", "rules/general.md", ".gitignore", "friday.yaml"} {
+	for _, rel := range []string{"core.md", "rules/general.md", ".gitignore", "friday.yaml"} {
 		if _, err := os.Stat(filepath.Join(storeDir, rel)); err != nil {
 			t.Errorf("missing %s: %v", rel, err)
 		}

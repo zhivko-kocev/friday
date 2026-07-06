@@ -1,0 +1,108 @@
+package presets
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/zhivko-kocev/friday/internal/rules"
+)
+
+// PluginsDirName is the store subdirectory scanned for out-of-tree presets.
+const PluginsDirName = "plugins"
+
+// pluginFile is the YAML schema of one plugin preset — the same shape as a
+// friday.yaml adapter, plus an optional name (default: the file stem).
+type pluginFile struct {
+	Name          string        `yaml:"name,omitempty"`
+	Target        string        `yaml:"target"`
+	Rules         []*rules.Rule `yaml:"rules"`
+	ProjectTarget string        `yaml:"project_target,omitempty"`
+	ProjectRules  []*rules.Rule `yaml:"project_rules,omitempty"`
+}
+
+// LoadPlugins parses <storeDir>/plugins/*.yaml into presets keyed by name.
+// Parse or validation failures are collected per file, never fatal — one
+// broken plugin must not take the CLI down. Plugins layer between built-ins
+// and friday.yaml: a plugin may shadow a built-in, an explicit manifest
+// always wins (it is never silently mutated by plugins).
+func LoadPlugins(storeDir string) (map[string]Preset, []error) {
+	dir := filepath.Join(storeDir, PluginsDirName)
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, []error{err}
+	}
+
+	out := map[string]Preset{}
+	var errs []error
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || (!strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml")) {
+			continue
+		}
+		p, err := loadPluginFile(filepath.Join(dir, name))
+		if err != nil {
+			errs = append(errs, fmt.Errorf("plugin %s: %w", name, err))
+			continue
+		}
+		if _, dup := out[p.Name]; dup {
+			errs = append(errs, fmt.Errorf("plugin %s: duplicate preset name %q", name, p.Name))
+			continue
+		}
+		out[p.Name] = p
+	}
+	return out, errs
+}
+
+func loadPluginFile(path string) (Preset, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Preset{}, err
+	}
+	var pf pluginFile
+	if err := yaml.Unmarshal(data, &pf); err != nil {
+		return Preset{}, err
+	}
+	if pf.Name == "" {
+		base := filepath.Base(path)
+		pf.Name = strings.TrimSuffix(strings.TrimSuffix(base, ".yaml"), ".yml")
+	}
+	if strings.HasPrefix(pf.Name, "~") {
+		return Preset{}, fmt.Errorf("preset names starting with '~' are reserved")
+	}
+	if pf.Target == "" {
+		return Preset{}, fmt.Errorf("target is required")
+	}
+	if len(pf.Rules) == 0 {
+		return Preset{}, fmt.Errorf("at least one rule is required")
+	}
+	for i, r := range append(append([]*rules.Rule{}, pf.Rules...), pf.ProjectRules...) {
+		if err := r.Normalize(); err != nil {
+			return Preset{}, fmt.Errorf("rule[%d]: %w", i, err)
+		}
+	}
+	return Preset{
+		Name:          pf.Name,
+		Target:        pf.Target,
+		Rules:         pf.Rules,
+		ProjectTarget: pf.ProjectTarget,
+		ProjectRules:  pf.ProjectRules,
+	}, nil
+}
+
+// AllAdaptersWith returns the built-in presets overlaid with the store's
+// plugins — the fallback set used when friday.yaml is absent.
+func AllAdaptersWith(storeDir string) (map[string]Preset, []error) {
+	out := AllAdapters()
+	plugins, errs := LoadPlugins(storeDir)
+	for name, p := range plugins {
+		out[name] = p
+	}
+	return out, errs
+}
