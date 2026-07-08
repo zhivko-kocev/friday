@@ -2,7 +2,12 @@
 
 All notable changes to friday are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.1] — 2026-07-08
+
+### Removed
+- **The plugins feature** — `friday plugin` (`add`/`upgrade`/`remove`/`list`/`validate`), the `~/.friday/plugins/` overlay, the `friday.lock` pin file, and the plugin loader. friday now resolves adapters from the built-in presets plus your `friday.yaml` manifest only. Declarative-YAML plugins added a distribution and loader surface for little gain over editing `friday.yaml` directly, so removing them keeps the tool's moving parts minimal. (Unaffected: `${CLAUDE_PLUGIN_ROOT}` rewriting and support for Claude-Code-plugin-shaped knowledge repos like developer-os — that's a separate feature. `friday status --origin` now reports `friday.yaml` or `built-in`.)
+
+## [0.3.0] — 2026-07-08
 
 A UX + capability pass: a slimmer, more memorable command surface with an interactive terminal UI, a two-axis `status` that makes drift legible, a best-practice advisor in `doctor`, git-distributed plugins, and a pull data-loss fix.
 

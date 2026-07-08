@@ -8,7 +8,6 @@ import (
 	"github.com/zhivko-kocev/friday/internal/drift"
 	"github.com/zhivko-kocev/friday/internal/engine"
 	"github.com/zhivko-kocev/friday/internal/output"
-	"github.com/zhivko-kocev/friday/internal/presets"
 )
 
 type statusOpts struct {
@@ -23,7 +22,7 @@ func statusFlags(o *statusOpts) *flag.FlagSet {
 	fs.BoolVar(&o.asJSON, "json", false, "machine-readable output")
 	fs.BoolVar(&o.diff, "diff", false, "also print the content diff for each pending render")
 	fs.BoolVar(&o.check, "check", false, "exit 2 if anything is out of sync (for CI); 0 when clean")
-	fs.BoolVar(&o.origin, "origin", false, "also show where each adapter is defined (friday.yaml / built-in / plugin)")
+	fs.BoolVar(&o.origin, "origin", false, "also show where each adapter is defined (friday.yaml / built-in)")
 	return fs
 }
 
@@ -249,38 +248,26 @@ func printStatusDiffs(changes []engine.Change) {
 
 // printStatusOrigin shows where each adapter's definition comes from. A
 // friday.yaml manifest is authoritative when present — that's where you edit
-// an adapter. With no manifest, friday falls back to the built-in presets
-// overlaid with any ~/.friday/plugins, so each adapter is tagged built-in or
-// plugin. (The loader is either/or, not a merge, so this is exact.)
+// an adapter; with no manifest, friday falls back to the built-in presets.
+// (The loader is either/or, not a merge, so this is exact.)
 func printStatusOrigin(cfg *config.Config) {
 	output.Header("origin:")
 	manifest := false
 	if fi, err := os.Stat(cfg.ManifestPath); err == nil && !fi.IsDir() {
 		manifest = true
 	}
-	var pluginNames map[string]bool
-	if !manifest {
-		pluginNames = map[string]bool{}
-		plugins, _ := presets.LoadPlugins(cfg.StoreDir)
-		for name := range plugins {
-			pluginNames[name] = true
-		}
+	origin := "built-in"
+	if manifest {
+		origin = "friday.yaml"
 	}
 	for _, name := range cfg.AdapterNames() {
-		origin := "built-in"
-		switch {
-		case manifest:
-			origin = "friday.yaml"
-		case pluginNames[name]:
-			origin = "plugin"
-		}
 		target, _ := cfg.AdapterTargetAbs(name)
 		output.Line(output.LevelInfo, "%-12s %-11s %s", name, origin, target)
 	}
 	if manifest {
 		output.Dim("defined in %s — edit or delete an entry there", cfg.ManifestPath)
 	} else {
-		output.Dim("no friday.yaml — using built-in presets + ~/.friday/plugins")
+		output.Dim("no friday.yaml — using built-in presets")
 	}
 }
 

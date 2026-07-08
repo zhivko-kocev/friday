@@ -25,7 +25,6 @@ item landed in (v0.1.0–v0.2.1).
 - [x] `friday sync` — pull then push with shared baseline bookkeeping.
 - [x] `friday rollback` — push snapshots (content-addressed blobs + journal) with restore.
 - [x] **Three-way merge** in the conflict prompt (`[m]`) when a merge base is recoverable from the snapshot store; clean merges apply, overlaps offer conflict markers.
-- [x] `friday plugin` — out-of-tree YAML presets in `~/.friday/plugins/`, layered between built-ins and `friday.yaml`.
 - [x] `friday eject` — capture targets into the store, then remove friday's bookkeeping.
 - [x] Store checks — malformed frontmatter, oversized files, broken relative refs, destination collisions — run as part of `friday doctor` (was `friday lint`).
 
@@ -33,7 +32,6 @@ item landed in (v0.1.0–v0.2.1).
 
 - [x] **Two-axis `friday status`** — a chezmoi-style two-column grid (local edits to capture + pending renders), with `--diff`, `--origin`, and a `--check` CI exit code. The `--json` body and default exit code are unchanged.
 - [x] **Best-practice advisor** — `friday doctor` gained severity-ranked static-config lint rules (`long-instructions`, `skill-description`, plus the existing store checks), a per-store `.friday-doctor.yaml` disable list, and `doctor --json`. A one-shot linter for how you author agent config — never a resident process; runtime operating judgment stays out of scope by design.
-- [x] **Git-distributed plugins** — `friday plugin add/upgrade/remove <git-url>` fetches declarative YAML presets (no code execution), pinned by commit in `plugins/friday.lock` for reproducible team renders; `plugin list --urls` shows provenance.
 
 ## Later
 

@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/zhivko-kocev/friday/internal/config"
-	"github.com/zhivko-kocev/friday/internal/output"
 	"github.com/zhivko-kocev/friday/internal/presets"
 )
 
@@ -29,7 +28,7 @@ func loadUserOrDefault() (*config.Config, error) {
 	}
 	storeDir, _ := config.UserStoreDir()
 	home, _ := os.UserHomeDir()
-	return config.NewDefault(config.ScopeUser, storeDir, home, presetAdapters(storeDir)), nil
+	return config.NewDefault(config.ScopeUser, storeDir, home, presetAdapters()), nil
 }
 
 // installedAdapters returns the names of every adapter in cfg whose target
@@ -49,16 +48,11 @@ func installedAdapters(cfg *config.Config) []string {
 	return out
 }
 
-// presetAdapters renders the fallback adapter set: built-ins overlaid with
-// the store's plugins. Plugin load errors are warnings — a broken plugin
-// file must not take push/pull down.
-func presetAdapters(storeDir string) map[string]*config.Adapter {
-	all, errs := presets.AllAdaptersWith(storeDir)
-	for _, err := range errs {
-		output.Warn("%v", err)
-	}
+// presetAdapters renders the fallback adapter set from the built-in presets,
+// used when the store has no friday.yaml manifest.
+func presetAdapters() map[string]*config.Adapter {
 	out := map[string]*config.Adapter{}
-	for name, p := range all {
+	for name, p := range presets.AllAdapters() {
 		out[name] = p.Adapter()
 	}
 	return out

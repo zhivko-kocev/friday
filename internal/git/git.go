@@ -179,16 +179,6 @@ func Status(dir string) (string, error) {
 	return output("-C", dir, "status", "--short", "--branch")
 }
 
-// HeadSHA returns the full commit hash at HEAD, or "" if it can't be read.
-// Used to pin a fetched plugin in friday.lock for reproducible renders.
-func HeadSHA(dir string) string {
-	out, err := output("-C", dir, "rev-parse", "HEAD")
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(out)
-}
-
 func run(args ...string) error {
 	out, err := exec.Command("git", args...).CombinedOutput()
 	if err != nil {

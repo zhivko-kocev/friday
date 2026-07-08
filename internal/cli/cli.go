@@ -48,7 +48,6 @@ func commandTable() []command {
 		{name: "pull", summary: "one-way sync: agent edits → store (--discover finds new files)", advanced: true, run: cmdPull, flags: func() *flag.FlagSet { return pullFlags(&pullOpts{}) }, completesAdapters: true},
 		{name: "promote", summary: "capture project agent config back into ~/.friday", advanced: true, run: cmdPromote, flags: func() *flag.FlagSet { return promoteFlags(&promoteOpts{}) }},
 		{name: "rollback", aliases: []string{"undo"}, summary: "restore files from a pre-write snapshot", advanced: true, run: cmdRollback, flags: func() *flag.FlagSet { return rollbackFlags(&rollbackOpts{}) }},
-		{name: "plugin", summary: "manage out-of-tree presets (~/.friday/plugins)", advanced: true, run: cmdPlugin, subcommands: []string{"add", "upgrade", "remove", "list", "validate"}},
 		{name: "eject", summary: "capture targets, then remove friday's bookkeeping", advanced: true, run: cmdEject, flags: func() *flag.FlagSet { return ejectFlags(&ejectOpts{}) }},
 		{name: "remote", summary: "git ops on ~/.friday (init/pull/push/propose/status)", advanced: true, run: cmdRemote, subcommands: []string{"init", "pull", "push", "propose", "status"}},
 		{name: "doctor", summary: "health-check the install + lint the store; `doctor <file>` explains a mapping", advanced: true, run: cmdDoctor},

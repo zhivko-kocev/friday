@@ -175,15 +175,13 @@ func Run(prompt io.Reader, cwd string, opts Options, onConflict engine.ConflictR
 
 	agent := opts.Agent
 	if agent == "" {
-		if agent, err = selectAgent(reader, presets.NamesWith(storeDir), tui); err != nil {
+		if agent, err = selectAgent(reader, presets.Names(), tui); err != nil {
 			return nil, err
 		}
 	}
-	// GetWith, not Get: plugin presets must be as usable here as they are
-	// for push and pull.
-	preset, ok := presets.GetWith(storeDir, agent)
+	preset, ok := presets.Get(agent)
 	if !ok {
-		return nil, fmt.Errorf("unknown agent %q (available: %s)", agent, strings.Join(presets.NamesWith(storeDir), ", "))
+		return nil, fmt.Errorf("unknown agent %q (available: %s)", agent, strings.Join(presets.Names(), ", "))
 	}
 	if len(preset.ProjectRules) == 0 {
 		return nil, fmt.Errorf("preset %q has no project-scope mapping", agent)
@@ -248,13 +246,13 @@ func Promote(prompt io.Reader, cwd string, opts PromoteOptions, onConflict engin
 
 	agent := opts.Agent
 	if agent == "" {
-		if agent, err = selectAgent(bufio.NewReader(prompt), presets.NamesWith(storeDir), opts.Interactive && ui.Interactive()); err != nil {
+		if agent, err = selectAgent(bufio.NewReader(prompt), presets.Names(), opts.Interactive && ui.Interactive()); err != nil {
 			return nil, err
 		}
 	}
-	preset, ok := presets.GetWith(storeDir, agent)
+	preset, ok := presets.Get(agent)
 	if !ok {
-		return nil, fmt.Errorf("unknown agent %q (available: %s)", agent, strings.Join(presets.NamesWith(storeDir), ", "))
+		return nil, fmt.Errorf("unknown agent %q (available: %s)", agent, strings.Join(presets.Names(), ", "))
 	}
 	if len(preset.ProjectRules) == 0 {
 		return nil, fmt.Errorf("preset %q has no project-scope mapping", agent)
