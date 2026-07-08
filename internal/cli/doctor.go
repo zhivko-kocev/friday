@@ -25,10 +25,15 @@ import (
 //
 // Exits non-zero only when something is actually broken; "no agents installed"
 // is informational, not an error.
+func doctorFlags(asJSON *bool) *flag.FlagSet {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.BoolVar(asJSON, "json", false, "machine-readable store-check findings (for CI)")
+	return fs
+}
+
 func cmdDoctor(args []string) int {
 	var asJSON bool
-	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	fs.BoolVar(&asJSON, "json", false, "machine-readable store-check findings (for CI)")
+	fs := doctorFlags(&asJSON)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return 1

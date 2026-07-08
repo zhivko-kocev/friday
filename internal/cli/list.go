@@ -8,11 +8,11 @@ import (
 )
 
 // cmdList — show every adapter configured in friday.yaml plus whether its
-// target dir is present on this machine. Argument is accepted but ignored
-// (back-compat for `friday list adapters`); this UX is deliberately one view.
+// target dir is present on this machine. This UX is deliberately one view, so
+// it takes no arguments.
 func cmdList(args []string) int {
-	if len(args) > 0 && args[0] != "adapters" && args[0] != "all" {
-		output.Err("unknown list target %q (want: adapters)", args[0])
+	if len(args) > 0 {
+		output.Err("friday list takes no arguments")
 		return 1
 	}
 	return printAdapters()

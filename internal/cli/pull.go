@@ -14,13 +14,13 @@ import (
 )
 
 type pullOpts struct {
-	dryRun, force, noInteractive, discover bool
+	dryRun, all, noInteractive, discover bool
 }
 
 func pullFlags(o *pullOpts) *flag.FlagSet {
 	fs := flag.NewFlagSet("pull", flag.ContinueOnError)
 	fs.BoolVar(&o.dryRun, "dry-run", false, "show what would change without writing")
-	fs.BoolVar(&o.force, "force", false, "auto-apply every adapter (skip the prompt)")
+	fs.BoolVar(&o.all, "all", false, "auto-apply every adapter (skip the prompt)")
 	fs.BoolVar(&o.noInteractive, "no-interactive", false, "skip prompts; legacy batch flow")
 	fs.BoolVar(&o.discover, "discover", false, "walk the agent dir and capture files a normal pull can't see (bootstrap/enrich the store)")
 	return fs
@@ -34,6 +34,9 @@ func pullFlags(o *pullOpts) *flag.FlagSet {
 func cmdPull(args []string) int {
 	var o pullOpts
 	fs := pullFlags(&o)
+	// --force was the old name for --all on pull; keep it working but nudge,
+	// since --force means "overwrite on drift" on every other command.
+	args = renameFlag(args, "force", "all", "note: --force is deprecated on pull; use --all")
 	adapters, err := parseInterleaved(fs, args)
 	if err != nil {
 		return 1
@@ -46,12 +49,12 @@ func cmdPull(args []string) int {
 	}
 
 	if o.discover {
-		return pullDiscover(cfg, adapters, o.dryRun, o.force, o.noInteractive)
+		return pullDiscover(cfg, adapters, o.dryRun, o.all, o.noInteractive)
 	}
 	if o.noInteractive {
-		return pullBatch(cfg, adapters, o.dryRun, o.force)
+		return pullBatch(cfg, adapters, o.dryRun, o.all)
 	}
-	return pullPerAdapter(cfg, adapters, o.dryRun, o.force)
+	return pullPerAdapter(cfg, adapters, o.dryRun, o.all)
 }
 
 // pullDiscover is `pull --discover`: reverse-expand each adapter's rules to
