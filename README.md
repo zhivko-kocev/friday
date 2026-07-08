@@ -8,7 +8,15 @@
 
 Every AI coding agent wants its config in a different folder, in a different format. Claude Code reads `~/.claude/CLAUDE.md`. OpenAI Codex reads `~/.codex/AGENTS.md`. OpenCode reads `~/.config/opencode/AGENTS.md`. GitHub Copilot reads `~/.copilot/copilot-instructions.md`. The same rule, four times in four places, drifts the moment you stop maintaining all of them.
 
-**friday** is a Go CLI that keeps one canonical store at `~/.friday/` and writes it out to every agent in the format that agent expects. Edit a target directly and `friday pull` brings the change back. Optionally back the store with a git repo to version your rules like dotfiles and sync across machines or with a team.
+**friday** keeps one canonical store at `~/.friday/` and moves it where you need it. Five commands cover the whole workflow:
+
+- **`friday init`** — create or clone your store
+- **`friday sync`** — reconcile the store with every agent on this machine
+- **`friday setup`** — drop chosen knowledge into a project
+- **`friday share`** — propose store changes to your team
+- **`friday status`** — preview what would change
+
+Plain Markdown in, each agent's native format out — versioned by any git repo you point it at. `friday help` shows those five; `friday help --all` shows the full toolbox underneath.
 
 ```text
 $ friday push
@@ -71,38 +79,32 @@ Pre-built binaries: see the [releases page](https://github.com/zhivko-kocev/frid
 ## Quick start
 
 ```bash
-# Initialize ~/.friday.
+# 1. Create your store — clone a team/dotfiles repo, or scaffold a fresh one.
 friday init                                    # interactive: prompt for remote URL
 friday init --scaffold                         # non-interactive: empty store
-friday init --from-git git@example.com:me/developer-os.git   # non-interactive: clone (--remote is an alias)
+friday init --from-git git@example.com:me/developer-os.git   # clone (--remote is an alias)
 
-# Push to every agent that's installed on this machine
-friday push
+# 2. Reconcile the store with every agent installed on this machine.
+#    sync captures edits you made in an agent dir, then fans the store back out.
+friday sync
 
-# Push only to one agent (creates target dir on first run)
-friday push claude
-
-# Walk each installed agent: show diff, ask apply / skip / quit
-friday pull
-
-# Pull only one agent (legacy file-by-file conflict flow)
-friday pull claude
-
-# Diff without writing
+# 3. Preview first, any time — no writes.
 friday status
 
-# In a project directory: pick an agent, pick knowledge from ~/.friday,
-# and write it into the project's git-tracked config (.claude/, CLAUDE.md, ...)
+# 4. In a project: pick an agent + knowledge from ~/.friday, and write it into
+#    the project's git-tracked config (.claude/, CLAUDE.md, .github/, ...).
 friday setup
 
-# Read-only health check on the local install
-friday doctor
-
-# Commit + push ~/.friday to its git remote
-friday remote push -m "tweak rules"
+# 5. Send store changes to your team for review (opens an MR).
+friday share -m "tighten the review rules"
 ```
 
-Non-interactive forms for CI / scripting also exist for `push`/`pull` via `--no-interactive`.
+Everyday work is those five. Under the hood `friday sync` is `friday pull`
+(agent edits → store) then `friday push` (store → agents) — run either alone
+for one-way flow, e.g. `friday push claude`. First time trying friday on a
+machine that already has a configured agent? `friday pull --discover` walks the
+agent dir and seeds the store from it. `--no-interactive` on any of these gives
+the CI/scripting form.
 
 ## The `~/.friday` layout
 
@@ -154,24 +156,36 @@ To disable an adapter, delete its entry from `friday.yaml`. To customize a targe
 
 ## Commands
 
+The everyday five:
+
 ```
-init [flags]               Prompt for a remote URL; clone or scaffold ~/.friday
-setup [flags]              In a project dir: pick an agent + store items, write .claude/ etc.
-list                       Adapters in friday.yaml + whether each is installed
-push [adapters...]         Write ~/.friday into each installed agent's dir
-pull [adapters...]         No args = per-agent diff + apply prompt; with args = legacy batch
-status [adapters...]       Show diff without writing
-doctor                     Read-only health check (store, manifest, drift)
-remote pull|push|status    git operations on ~/.friday
+init                Create or clone your ~/.friday store
+sync                Reconcile the store with every installed agent
+setup               In a project: pick an agent + knowledge, write .claude/ etc.
+share               Propose store changes to your team (opens an MR)
+status              Two-axis view of every managed file, without writing
 ```
 
-Run `friday help` for full flags.
+`friday status` shows a two-column grid — column 1 flags a target you edited
+directly (an edit `sync`/`pull` would capture), column 2 flags a pending render
+(the store changed and `sync`/`push` would update the agent). Add `--diff` for
+the content diff, `--origin` to see where each adapter is defined, or `--check`
+for a CI exit code (2 when anything is out of sync).
+
+Underneath (`friday help --all`): `push` / `pull` (one-way sync; `pull --discover`
+seeds the store from an existing install), `promote` (project → store), `doctor`
+(health check + a best-practice advisor over your store; `doctor <file>` explains
+which rule produces a file; `doctor --json` for CI), `remote` (git bridge for the
+store), `rollback`/`undo`, `list`, `eject`, `plugin` (`add`/`upgrade` git-distributed
+YAML presets, pinned in `plugins/friday.lock`), `completion`.
+
+Run `friday <command> --help` for a command's flags.
 
 ## Safety
 
 - **Atomic writes** — every target file is written via a temp file + rename, so a Ctrl-C mid-write leaves the previous version intact.
 - **Drift detection** — friday tracks SHA256 of every file it writes and refuses to clobber edits you've made directly in an agent's dir. Resolve interactively or with `--force`.
-- **Pull captures edits, not new files** — a file *created* directly in an agent dir (e.g. a new skill authored in `~/.claude/skills/`) is invisible to `pull`; move it into `~/.friday` yourself. (`friday import` is on the roadmap to close this.)
+- **Pull captures edits; `--discover` captures new files** — a plain `friday pull` only updates files the store already knows about. A file *created* directly in an agent dir (e.g. a new skill authored in `~/.claude/skills/`) is caught by `friday pull --discover`, which walks the agent dir and enriches the store.
 - **CRLF tolerance** — Windows checkouts don't get flagged as drift.
 - **No secrets** — the scaffolded `.gitignore` filters `.env`, `*.key`, `*.pem`, and Claude Code's runtime state dirs.
 

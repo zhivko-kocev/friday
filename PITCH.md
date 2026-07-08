@@ -40,8 +40,8 @@ That's it. No proprietary format. No hosted service. No daemon.
 ## What you get
 
 - **One canonical store**, version-controlled in a git repo of your choice.
-- **Four built-in presets** for Claude Code, Codex, OpenCode, and GitHub Copilot.
-  Add a fifth in 30 lines of Go.
+- **Seven built-in presets** — Claude Code, Codex, OpenCode, GitHub Copilot,
+  Windsurf, Antigravity, and pi. Add another in ~30 lines of Go.
 - **Plain Markdown content.** Your config repo is just `core.md`, `rules/*.md`,
   `skills/foo/*`. No yaml manifest required — friday seeds one on init with
   every built-in preset, but you can hand-edit or delete entries freely.
@@ -120,6 +120,6 @@ to `internal/presets/presets.go`. The next `friday push` includes it.
 └──────────────┴──────────────┴────────────────────┴───────────────┘
 ```
 
-Same source, four flavours. One push.
+Same source, every agent. One sync.
 
 *Stop maintaining four config files for the same idea. Maintain one.*

@@ -2,6 +2,32 @@
 
 All notable changes to friday are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+A UX + capability pass: a slimmer, more memorable command surface with an interactive terminal UI, a two-axis `status` that makes drift legible, a best-practice advisor in `doctor`, git-distributed plugins, and a pull data-loss fix.
+
+### Added
+- **Interactive TUI** (built on the Charm stack) for `setup` (agent picker + a checkbox list of knowledge, with sensible items pre-checked), `pull`, the drift/conflict resolver, and the `init` URL prompt; animated spinners on network git operations. It activates only on a real terminal — pipes, CI, `--no-interactive`, and tests keep the exact plain, line-based output as before.
+- **Two-axis `friday status`** — a chezmoi-style two-column grid: column 1 flags a target you hand-edited since friday last wrote it (an edit to capture), column 2 flags a pending render (canonical differs from the target). Not-installed agents collapse to one summary line so the view stays scannable. `status --diff` prints the content diff for each pending render; `status --origin` shows where each adapter is defined (friday.yaml / built-in / plugin); `status --check` adds a terraform-style exit code (2 when anything is out of sync) for CI. The `--json` body and default exit code are unchanged.
+- **Best-practice advisor** in `friday doctor` — static-config lint rules with severities (`error` fails the check, `warn` is advisory), stable grep-able rule ids, and a self-contained fix hint per finding. New rules: `long-instructions` (an entry/rule file over 200 lines) and `skill-description` (a skill missing a usable trigger description). Silence a rule per store in `.friday-doctor.yaml` (`disable: [...]`). `friday doctor --json` emits the findings for CI.
+- **Git-distributed plugins** — `friday plugin add <name> <git-url>` fetches a declarative YAML preset from a repo (no code ever runs), pins the resolved commit in `plugins/friday.lock` for reproducible team renders, and installs it as `plugins/<name>.yaml`. `friday plugin upgrade [name|--all]` re-fetches and re-pins; `friday plugin remove <name>` uninstalls; `friday plugin list --urls` shows provenance.
+- `friday share` — propose your store changes for team review (opens an MR); the everyday name for `remote propose`.
+- `friday pull --discover` — walk an agent's dir and capture files a normal pull can't see, to bootstrap or enrich the store (replaces `friday import`).
+- `friday doctor <file>` — explain which adapter + rule produces a file (replaces `friday explain`); `friday doctor` with no args now also runs the store checks that were `friday lint`.
+- **Tiered help** — `friday help` lists the five everyday commands; `friday help --all` shows the full toolbox; `friday <command> --help` shows one command's flags. `rollback` gains the `undo` alias.
+
+### Changed
+- Command surface consolidated around a five-verb spine — `init`, `sync`, `setup`, `share`, `status` — with `push`/`pull` and the rest demoted to an advanced tier (all still dispatch and complete exactly as before).
+- `friday doctor` no longer fails on advisory findings — only error-severity store problems make it exit non-zero; best-practice warnings are informational.
+- Colors are centralized on a single theme; non-color output is unchanged byte-for-byte.
+
+### Removed
+- `friday import`, `friday explain`, and `friday lint` as standalone commands — folded into `friday pull --discover` and `friday doctor` (capability unchanged).
+- `friday compile` — removed as too niche; convert by pushing into the store and out to the other agent.
+
+### Fixed
+- **Pull rendered a just-captured edit as a spurious removal** on a second agent that maps the same store file (and `sync --force` / `pull --no-interactive --force` could silently revert it). Pull now recognizes a store file another agent updated earlier in the same run — reporting the trailing agent in-sync when it's merely behind, or a conflict when it carries its own divergent edit — instead of overwriting the fresh store content.
+
 ## [0.2.1] — 2026-07-06
 
 Hardening release: an adversarial review of v0.1.0/v0.2.0 surfaced 21 confirmed defects — most of them silent-data-loss paths in the drift/baseline machinery — all fixed here with regression tests.
