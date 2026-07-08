@@ -110,7 +110,7 @@ func planCopy(adapterName string, r *rules.Rule, storeAbs, targetAbs string) ([]
 	matchedAny := false
 	// A literal template (or colliding filenames) can map several sources to
 	// one destination; the from-list is ordered most-preferred first, so the
-	// first source wins. `friday lint` reports the collision.
+	// first source wins. `friday doctor` reports the collision.
 	seenDest := map[string]bool{}
 	for _, pat := range r.From {
 		matches, err := rules.Expand(storeAbs, pat)

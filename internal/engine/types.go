@@ -130,6 +130,17 @@ type Options struct {
 	// BaseLookup resolves a drift baseline hash to its content (snapshot
 	// blob store). Nil disables merge-base recovery.
 	BaseLookup func(hash string) ([]byte, bool)
+	// PulledStorePaths accumulates the store files captured by pull-direction
+	// writes over one logical pull operation. runWith applies each adapter
+	// before planning the next, and the interactive walk makes a separate Pull
+	// call per adapter — so once one agent's edit lands in a store file, a later
+	// agent whose target still holds the pre-pull bytes would plan to write them
+	// back over it (rendering the just-pulled change as a spurious removal, or
+	// under --force silently reverting it). The pull commands thread one shared
+	// map through the whole run so resolveConflict can spot and stop that. Nil
+	// (push, import, compile, and every path that doesn't opt in) disables the
+	// check entirely — behavior is then exactly as before.
+	PulledStorePaths map[string]bool
 	// driftPath overrides where baselines are read and written. Compile sets
 	// it to a throwaway file so temp-store runs never touch the user's real
 	// drift state. Empty means drift.DefaultPath().

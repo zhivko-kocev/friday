@@ -8,6 +8,9 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/zhivko-kocev/friday/internal/output"
+	"github.com/zhivko-kocev/friday/internal/ui"
 )
 
 type Choice int
@@ -30,7 +33,67 @@ const (
 //
 // Returns ChoiceSkip on EOF or unrecognised input after retries.
 func Prompt(labelCanonical, labelDest string, canonical, dest, base []byte) (Choice, []byte) {
+	if ui.Interactive() {
+		return promptTUI(labelCanonical, labelDest, canonical, dest, base)
+	}
 	return promptIO(os.Stdin, os.Stdout, labelCanonical, labelDest, canonical, dest, base)
+}
+
+// promptTUI is the rich-terminal counterpart of promptIO: an arrow-key menu
+// with the same choices and the same per-direction wording. "show diff" prints
+// a colored diff and re-prompts; "merge" offers conflict markers on overlap.
+// A cancelled prompt (ctrl-c / esc) resolves to skip, leaving both sides
+// untouched — the safe default for a destructive decision.
+func promptTUI(labelCanonical, labelDest string, canonical, dest, base []byte) (Choice, []byte) {
+	const keep, use, merge, diff, skip = "keep", "use", "merge", "diff", "skip"
+	for range 5 {
+		choices := []ui.Choice{
+			{Value: keep, Label: "keep " + labelCanonical},
+			{Value: use, Label: "use " + labelDest},
+		}
+		if base != nil {
+			choices = append(choices, ui.Choice{Value: merge, Label: "merge the two"})
+		}
+		choices = append(choices,
+			ui.Choice{Value: diff, Label: "show diff"},
+			ui.Choice{Value: skip, Label: "skip (leave both untouched)"},
+		)
+
+		got, err := ui.SelectOne("Resolve conflict", choices)
+		if err != nil {
+			return ChoiceSkip, nil
+		}
+		switch got {
+		case keep:
+			return ChoiceKeep, nil
+		case use:
+			return ChoiceTake, nil
+		case skip, "":
+			return ChoiceSkip, nil
+		case merge:
+			merged, clean := Merge(base, canonical, dest, labelCanonical, labelDest)
+			if clean {
+				output.OK("merged cleanly")
+				return ChoiceMerge, merged
+			}
+			if ui.Confirm("edits overlap — write with conflict markers?") {
+				return ChoiceMerge, merged
+			}
+		case diff:
+			renderDiffColored(labelCanonical, labelDest, canonical, dest)
+		}
+	}
+	return ChoiceSkip, nil
+}
+
+// renderDiffColored prints the same line diff renderDiff produces, but through
+// the output helpers so +/- lines are colored on a terminal.
+func renderDiffColored(labelA, labelB string, a, b []byte) {
+	output.Dim("--- %s", labelA)
+	output.Dim("+++ %s", labelB)
+	for _, op := range LineDiff(a, b) {
+		output.DiffLine(op)
+	}
 }
 
 func promptIO(in io.Reader, out io.Writer, labelCanonical, labelDest string, canonical, dest, base []byte) (Choice, []byte) {

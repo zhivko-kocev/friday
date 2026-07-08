@@ -93,6 +93,14 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 					return nil, fmt.Errorf("apply %s: %w", ch.DestPath, err)
 				}
 				wrote = wrote || didWrite
+				// Remember store files this pull actually captured, so a later
+				// adapter mapping the same file isn't planned against the
+				// content we just wrote. Nil map (non-pull, or a caller that
+				// didn't opt in) skips the bookkeeping.
+				if didWrite && dir == DirPull && opts.PulledStorePaths != nil &&
+					(ch.Action == ActionCreate || ch.Action == ActionUpdate) {
+					opts.PulledStorePaths[ch.DestPath] = true
+				}
 			}
 		}
 		all = append(all, changes...)
@@ -170,6 +178,29 @@ func resolveConflict(ch *Change, store *drift.Store, opts Options) {
 				ch.staleTarget = true
 				return
 			}
+		}
+		// Another agent already captured this same store file earlier in this
+		// run (the shared store moved under us). This target is either merely
+		// behind that update or carries its own divergent edit — the target
+		// baseline tells them apart. Only fires when a pull command opted in by
+		// threading PulledStorePaths; nil map => never taken.
+		if opts.PulledStorePaths[ch.DestPath] {
+			if store.BaselineHash(ch.Adapter, ch.SrcAbs) == "" {
+				// No baseline: never pushed, so "stale and behind" is
+				// indistinguishable from a real edit. The store was just
+				// updated from another agent — treat this one as behind and
+				// fan out with a push rather than reverting the store.
+				ch.Action = ActionInSync
+				ch.Reason = "store file just updated from another agent this run — run `friday push` to update this one"
+				ch.staleTarget = true
+				return
+			}
+			// A baseline exists and the clean-stale guard above did not fire, so
+			// this target genuinely drifted: this agent edited its own copy
+			// differently. Surface it instead of silently dropping either edit.
+			ch.Action = ActionConflict
+			ch.Reason = "another agent updated this store file this run and this agent's copy also changed — pull this adapter on its own to capture its edits"
+			return
 		}
 		// Missing canonical baseline reads as drifted (exists && drifted) —
 		// the conservative stance for stores that predate canonical

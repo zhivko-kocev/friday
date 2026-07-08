@@ -10,10 +10,11 @@ import (
 	"github.com/zhivko-kocev/friday/internal/config"
 	"github.com/zhivko-kocev/friday/internal/engine"
 	"github.com/zhivko-kocev/friday/internal/output"
+	"github.com/zhivko-kocev/friday/internal/ui"
 )
 
 type pullOpts struct {
-	dryRun, force, noInteractive bool
+	dryRun, force, noInteractive, discover bool
 }
 
 func pullFlags(o *pullOpts) *flag.FlagSet {
@@ -21,6 +22,7 @@ func pullFlags(o *pullOpts) *flag.FlagSet {
 	fs.BoolVar(&o.dryRun, "dry-run", false, "show what would change without writing")
 	fs.BoolVar(&o.force, "force", false, "auto-apply every adapter (skip the prompt)")
 	fs.BoolVar(&o.noInteractive, "no-interactive", false, "skip prompts; legacy batch flow")
+	fs.BoolVar(&o.discover, "discover", false, "walk the agent dir and capture files a normal pull can't see (bootstrap/enrich the store)")
 	return fs
 }
 
@@ -43,19 +45,64 @@ func cmdPull(args []string) int {
 		return 1
 	}
 
+	if o.discover {
+		return pullDiscover(cfg, adapters, o.dryRun, o.force, o.noInteractive)
+	}
 	if o.noInteractive {
 		return pullBatch(cfg, adapters, o.dryRun, o.force)
 	}
 	return pullPerAdapter(cfg, adapters, o.dryRun, o.force)
 }
 
+// pullDiscover is `pull --discover`: reverse-expand each adapter's rules to
+// walk its target dir and capture files a store-driven pull can't see (a skill
+// authored directly in ~/.claude/skills/, a hand-added agent). This is how you
+// bootstrap or enrich the store from an existing install. Args are adapter
+// names or target dirs; none = every installed adapter.
+func pullDiscover(cfg *config.Config, args []string, dryRun, force, noInteractive bool) int {
+	names := args
+	if len(names) == 0 {
+		names = installedAdapters(cfg)
+		if len(names) == 0 {
+			output.Warn("no installed agents detected — nothing to discover")
+			return 0
+		}
+	}
+	resolved := make([]string, 0, len(names))
+	for _, a := range names {
+		name, err := resolveAdapterArg(cfg, a)
+		if err != nil {
+			output.Err("%v", err)
+			return 1
+		}
+		resolved = append(resolved, name)
+	}
+
+	opts := engine.Options{Adapters: resolved, DryRun: dryRun, Force: force}
+	if !noInteractive {
+		opts.OnConflict = interactiveResolver()
+		opts.BaseLookup = baseLookup()
+	}
+	changes, err := engine.Import(cfg, opts)
+	if err != nil {
+		output.Err("%v", err)
+		return 1
+	}
+	if !dryRun {
+		recordSnapshot(changes)
+	}
+	report(changes, false, dryRun)
+	return exitCode(changes)
+}
+
 // pullBatch is the legacy single-pass flow, kept for `--no-interactive`
 // (CI / scripts) where per-adapter prompting makes no sense.
 func pullBatch(cfg *config.Config, adapters []string, dryRun, force bool) int {
 	changes, err := engine.Pull(cfg, engine.Options{
-		Adapters: adapters,
-		DryRun:   dryRun,
-		Force:    force,
+		Adapters:         adapters,
+		DryRun:           dryRun,
+		Force:            force,
+		PulledStorePaths: map[string]bool{},
 	})
 	if err != nil {
 		output.Err("%v", err)
@@ -88,10 +135,16 @@ func pullPerAdapter(cfg *config.Config, adapters []string, dryRun, force bool) i
 	reader := bufio.NewReader(os.Stdin)
 	var seen []engine.Change
 
+	// One shared provenance map across every per-adapter Pull call: an edit
+	// captured from an earlier agent must not read as a removal (or, under
+	// --force, silently revert) when a later agent maps the same store file.
+	captured := map[string]bool{}
+
 	for _, name := range installed {
 		planned, err := engine.Pull(cfg, engine.Options{
-			Adapters: []string{name},
-			DryRun:   true,
+			Adapters:         []string{name},
+			DryRun:           true,
+			PulledStorePaths: captured,
 		})
 		if err != nil {
 			output.Err("plan %s: %v", name, err)
@@ -113,15 +166,20 @@ func pullPerAdapter(cfg *config.Config, adapters []string, dryRun, force bool) i
 
 		choice := "a"
 		if !force {
-			choice = promptApplyChoice(reader)
+			if ui.Interactive() {
+				choice = promptApplyChoiceTUI(name)
+			} else {
+				choice = promptApplyChoice(reader)
+			}
 		}
 		switch choice {
 		case "a":
 			applied, err := engine.Pull(cfg, engine.Options{
-				Adapters:   []string{name},
-				Force:      force,
-				OnConflict: interactiveResolver(),
-				BaseLookup: baseLookup(),
+				Adapters:         []string{name},
+				Force:            force,
+				OnConflict:       interactiveResolver(),
+				BaseLookup:       baseLookup(),
+				PulledStorePaths: captured,
 			})
 			if err != nil {
 				output.Err("apply %s: %v", name, err)
@@ -158,6 +216,21 @@ func hasPullWork(changes []engine.Change) bool {
 	return false
 }
 
+// promptApplyChoiceTUI is the rich-terminal counterpart of promptApplyChoice:
+// an arrow-key list returning the same a/s/q codes. A cancelled prompt
+// (ctrl-c / esc) maps to "quit", stopping the walk without applying.
+func promptApplyChoiceTUI(name string) string {
+	choice, err := ui.SelectOne("Apply pulled changes for "+name+"?", []ui.Choice{
+		{Value: "a", Label: "apply"},
+		{Value: "s", Label: "skip"},
+		{Value: "q", Label: "quit"},
+	})
+	if err != nil || choice == "" {
+		return "q"
+	}
+	return choice
+}
+
 // promptApplyChoice reads one of a/s/q from the user. EOF returns the
 // distinct "eof" choice so the caller can exit non-zero — a piped stdin must
 // neither apply edits nor masquerade as a clean quit.
@@ -176,7 +249,7 @@ func promptApplyChoice(r *bufio.Reader) string {
 		case "q", "quit", "":
 			return "q"
 		default:
-			fmt.Println("  unrecognised — type a / s / q")
+			fmt.Println("  unrecognized — type [a]pply, [s]kip, or [q]uit")
 		}
 	}
 	return "q"
