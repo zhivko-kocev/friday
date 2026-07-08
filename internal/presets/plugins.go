@@ -102,6 +102,17 @@ func loadPluginFile(path string) (Preset, error) {
 	}, nil
 }
 
+// ValidatePluginFile parses and validates a single plugin preset file,
+// returning its resolved preset name. `friday plugin add` uses it to reject a
+// malformed file (or one that runs no rules) before installing it.
+func ValidatePluginFile(path string) (string, error) {
+	p, err := loadPluginFile(path)
+	if err != nil {
+		return "", err
+	}
+	return p.Name, nil
+}
+
 // AllAdaptersWith returns the built-in presets overlaid with the store's
 // plugins — the fallback set used when friday.yaml is absent.
 func AllAdaptersWith(storeDir string) (map[string]Preset, []error) {
