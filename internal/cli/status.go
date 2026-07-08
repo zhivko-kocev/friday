@@ -91,7 +91,7 @@ func cmdStatus(args []string) int {
 	rows := buildStatusRows(changes, handEditedLookup())
 	printStatusGrid(rows, installed)
 	if o.diff {
-		printStatusDiffs(changes)
+		printDiffs(changes)
 	}
 	if o.origin {
 		printStatusOrigin(cfg)
@@ -218,9 +218,7 @@ func printStatusGrid(rows []statusRow, installed map[string]bool) {
 	}
 	if len(shown) > 0 {
 		output.Dim("col 1: local edit to capture   col 2: pending render   ! conflict")
-		for _, r := range shown {
-			output.Line(r.level(), "%s%s  %-*s  %s", r.col1(), r.col2(), width, r.adapter, r.dest)
-		}
+		printGridRows(shown, width)
 	}
 	for _, name := range pendingOrder {
 		output.Line(output.LevelSkip, " A  %s (%d files — not installed; `friday sync` sets it up)", name, pending[name])
@@ -230,18 +228,56 @@ func printStatusGrid(rows []statusRow, installed map[string]bool) {
 	}
 }
 
-// printStatusDiffs prints the content diff for each pending render, under a
-// header, when --diff is set. Reuses report.go's printDiff.
-func printStatusDiffs(changes []engine.Change) {
-	any := false
-	for _, ch := range changes {
-		if ch.Action == engine.ActionCreate || ch.Action == engine.ActionUpdate || ch.Action == engine.ActionConflict {
-			if !any {
-				output.Header("diffs:")
-				any = true
+// statusCollapseMin is how many same-action pending renders one adapter must
+// have before they fold into a single count line instead of listing each file.
+// Below it, individual paths stay visible (status is the drill-down view);
+// above it, a flood collapses like the push report.
+const statusCollapseMin = 3
+
+// printGridRows renders the two-column grid body. Rows that need per-file
+// attention — a hand edit (column 1) or a conflict — always print individually.
+// Pure pending renders (column 2 only) fold per adapter and action into a
+// count-plus-breakdown line once a group reaches statusCollapseMin, so a large
+// render doesn't bury the rows that actually need a decision.
+func printGridRows(shown []statusRow, width int) {
+	var adapterOrder []string
+	seen := map[string]bool{}
+	individual := map[string][]statusRow{}
+	pendingDests := map[string]map[string][]string{} // adapter -> col2 marker -> dests
+	pendingOrder := map[string][]string{}            // adapter -> marker order
+	markerLevel := map[string]output.Level{}         // col2 marker -> level
+	for _, r := range shown {
+		if !seen[r.adapter] {
+			seen[r.adapter] = true
+			adapterOrder = append(adapterOrder, r.adapter)
+		}
+		if r.handEdit || r.render == engine.ActionConflict {
+			individual[r.adapter] = append(individual[r.adapter], r)
+			continue
+		}
+		m := r.col2()
+		if pendingDests[r.adapter] == nil {
+			pendingDests[r.adapter] = map[string][]string{}
+		}
+		if _, ok := pendingDests[r.adapter][m]; !ok {
+			pendingOrder[r.adapter] = append(pendingOrder[r.adapter], m)
+		}
+		pendingDests[r.adapter][m] = append(pendingDests[r.adapter][m], r.dest)
+		markerLevel[m] = r.level()
+	}
+	for _, a := range adapterOrder {
+		for _, r := range individual[a] {
+			output.Line(r.level(), "%s%s  %-*s  %s", r.col1(), r.col2(), width, r.adapter, r.dest)
+		}
+		for _, m := range pendingOrder[a] {
+			dests := pendingDests[a][m]
+			if len(dests) < statusCollapseMin {
+				for _, d := range dests {
+					output.Line(markerLevel[m], " %s  %-*s  %s", m, width, a, d)
+				}
+				continue
 			}
-			output.Dim("%s → %s", ch.Adapter, ch.DestRel)
-			printDiff(ch.OldContent, ch.NewContent)
+			output.Line(markerLevel[m], " %s  %-*s  %d files %s", m, width, a, len(dests), folderBreakdown(dests))
 		}
 	}
 }
