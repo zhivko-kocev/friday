@@ -22,25 +22,18 @@ Plain Markdown in, each agent's native format out — versioned by any git repo 
 $ friday push
   pushing to installed agents: [claude codex copilot opencode]
 
-  adapter: claude
-    create   core.md+rules/general.md      CLAUDE.md
-    create   agents/researcher.md          agents/researcher.md
-  adapter: codex
-    create   core.md+rules/general.md      AGENTS.md
-  adapter: copilot
-    create   core.md+rules/general.md      copilot-instructions.md
-  adapter: opencode
-    create   core.md                       AGENTS.md
-    create   rules/general.md              rules/general.md
-
-  summary:
-    adapters: claude, codex, copilot, opencode
-    claude    2 created, 0 updated, 0 in-sync
-    codex     1 created, 0 updated, 0 in-sync
-    copilot   1 created, 0 updated, 0 in-sync
-    opencode  2 created, 0 updated, 0 in-sync
-    total     6 created, 0 updated, 0 in-sync
+changes:
+  claude    2 created  (CLAUDE.md, agents/)
+  codex     1 created  (AGENTS.md)
+  copilot   1 created  (copilot-instructions.md)
+  opencode  2 created  (AGENTS.md, rules/)
+  summary: 6 created
 ```
+
+Each adapter folds into one line — a count plus a folder breakdown — instead of
+a row per file; files already in sync collapse to a tally, and only conflicts
+are named individually. `--diff` appends a windowed hunk view (a few lines of
+context around each edit, not the whole file).
 
 ## Install
 
@@ -82,7 +75,7 @@ Pre-built binaries: see the [releases page](https://github.com/zhivko-kocev/frid
 # 1. Create your store — clone a team/dotfiles repo, or scaffold a fresh one.
 friday init                                    # interactive: prompt for remote URL
 friday init --scaffold                         # non-interactive: empty store
-friday init --from-git git@example.com:me/developer-os.git   # clone (--remote is an alias)
+friday init --from-git git@example.com:me/developer-os.git   # clone an existing store
 
 # 2. Reconcile the store with every agent installed on this machine.
 #    sync captures edits you made in an agent dir, then fans the store back out.

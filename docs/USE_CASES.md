@@ -106,14 +106,15 @@ A file can be dirty on either, both (a conflict), or neither (in sync).
 **Flags:**
 | Flag | Meaning |
 |------|---------|
-| `--remote URL` | Clone URL into `~/.friday` without prompting (scripts). |
-| `--from-git URL` | Alias of `--remote`. |
+| `--from-git URL` | Clone URL into `~/.friday` without prompting (scripts). |
 | `--scaffold` | Create an empty store, no prompt, no clone. |
+
+(`--remote` is the deprecated earlier name for `--from-git` — it still works but prints a nudge.)
 
 **Examples:**
 ```bash
 friday init                                             # interactive: prompts for the URL
-friday init --remote git@github.com:me/ai-config.git    # clone a dotfiles/team repo
+friday init --from-git git@github.com:me/ai-config.git    # clone a dotfiles/team repo
 friday init --from-git git@github.com:me/developer-os.git  # a Claude-plugin-shaped repo works too
 friday init --scaffold                                  # start fresh, author from scratch
 ```
@@ -166,17 +167,19 @@ edits — the header says so.
 **When:** before a sync, in CI gates, or to answer "is anything out of step?"
 
 **Flow:** friday plans a dry-run push (column 2) and reads the drift store
-(column 1), then prints a grid. Installed agents show per-file; uninstalled
-agents collapse to a single "would create N files" line so the view stays
-scannable. A trailing count reports the in-sync remainder.
+(column 1), then prints a grid. Rows that need a decision — a hand edit
+(column 1) or a conflict — always show per file; a large group of plain
+pending renders folds into one count line per adapter, and uninstalled agents
+collapse to a single "would create N files" line, so the view stays scannable.
+A trailing count reports the in-sync remainder.
 
 **Reading the grid:**
 ```
 changes:
   col 1: local edit to capture   col 2: pending render   ! conflict
-  M   claude    CLAUDE.md      # you edited the target; store unchanged
-   M  codex     AGENTS.md      # store changed; target untouched — push will update
-  M!  claude    rules/x.md     # both changed — a conflict
+  M   claude    CLAUDE.md               # you edited the target; store unchanged
+  M!  claude    rules/x.md              # both changed — a conflict
+   M  codex     4 files (agents/×2, skills/×2)   # store changed; push will update
    A  opencode (12 files — not installed; `friday sync` sets it up)
   92 file(s) in sync
 ```
@@ -317,7 +320,7 @@ you're bootstrapping the store from an existing install.
 |------|---------|
 | `--discover` | Walk the agent dir; capture new files too. |
 | `--dry-run` | Show what would change. |
-| `--force` | Auto-apply every adapter (skip the prompt). |
+| `--all` | Auto-apply every adapter (skip the prompt). (`--force` is the deprecated alias.) |
 | `--no-interactive` | Skip prompts; legacy batch flow. |
 
 **Examples:**
@@ -485,7 +488,7 @@ friday <cmd> --help  # one command's flags
 
 ### 1. Solo developer, new machine
 ```bash
-friday init --remote git@github.com:me/ai-config.git   # clone your store
+friday init --from-git git@github.com:me/ai-config.git   # clone your store
 friday sync                                             # apply to every installed agent
 friday status                                           # confirm everything's in sync
 ```
@@ -503,7 +506,7 @@ friday remote push -m "seed store from this machine"
 ### 3. Team standards
 *A shared team-config repo; every developer points at it.*
 ```bash
-friday init --remote git@github.com:acme/ai-config.git
+friday init --from-git git@github.com:acme/ai-config.git
 friday sync
 # later, you improve a rule:
 friday share -m "require conventional-commit messages"   # opens an MR for review

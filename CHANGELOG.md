@@ -2,6 +2,20 @@
 
 All notable changes to friday are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] — 2026-07-08
+
+An output & experience polish pass — no new capabilities, just making what's there friendlier to read and less surprising to use.
+
+### Changed
+- **Change output collapses to folders + counts.** `push` / `pull` / `sync` / `setup` / `promote` no longer print a row per file. Each adapter folds into one line — a count plus a folder breakdown (`claude    5 updated  (CLAUDE.md, agents/×2, skills/×2)`) — files already in sync collapse to a single tally, and only conflicts and skips are named individually. The `status` grid gets the same treatment: hand-edits and conflicts stay per-file (they need a decision), while a large group of pending renders folds into one count line.
+- **`--diff` is now windowed.** `status --diff` and `push --diff` show a few lines of context around each edit with elided regions marked `…`, a per-file cap with a `+N more` tail, and a `(+A −B, H hunks)` footer — instead of dumping the entire file. The interactive conflict resolver still shows the full diff, since resolving a conflict needs complete context.
+- **`friday pull --force` is now `friday pull --all`.** On `pull`, the flag means "auto-apply every adapter" — a different meaning than `--force` ("overwrite on drift") carries everywhere else, which was a footgun. `--force` still works on `pull` but prints a deprecation note; use `--all`.
+- **`friday init --from-git` is the documented clone flag.** `--remote` was an exact alias; it still works but prints a deprecation note.
+
+### Fixed
+- `friday doctor --json` and the `friday remote` subcommand flags (`-m` / `--message` / `--branch` / `--target`) now appear in `--help` and shell completion — they were defined but invisible.
+- `friday list` no longer accepts the ignored `adapters` / `all` positional (dead back-compat); it takes no arguments.
+
 ## [0.3.1] — 2026-07-08
 
 ### Removed

@@ -28,7 +28,11 @@ item landed in (v0.1.0–v0.2.1).
 - [x] `friday eject` — capture targets into the store, then remove friday's bookkeeping.
 - [x] Store checks — malformed frontmatter, oversized files, broken relative refs, destination collisions — run as part of `friday doctor` (was `friday lint`).
 
-## Landed (v0.3.0, unreleased)
+## Landed (v0.3.2)
+
+- [x] **Output & experience polish.** `push`/`pull`/`sync` collapse to one count-plus-folder-breakdown line per adapter (in-sync files fold to a tally; only conflicts are named); the `status` grid does the same for large pending-render groups while keeping hand-edits and conflicts per file. `--diff` is windowed (context around each edit, elided regions marked, per-file cap). Flag cleanup: `pull --force` → `--all` (soft-deprecated), `init --from-git` is the documented clone flag (`--remote` soft-deprecated), `doctor --json` and the `remote` subcommand flags now show in help/completion, and `list` no longer takes the ignored `adapters`/`all` positional.
+
+## Landed (v0.3.0)
 
 - [x] **Two-axis `friday status`** — a chezmoi-style two-column grid (local edits to capture + pending renders), with `--diff`, `--origin`, and a `--check` CI exit code. The `--json` body and default exit code are unchanged.
 - [x] **Best-practice advisor** — `friday doctor` gained severity-ranked static-config lint rules (`long-instructions`, `skill-description`, plus the existing store checks), a per-store `.friday-doctor.yaml` disable list, and `doctor --json`. A one-shot linter for how you author agent config — never a resident process; runtime operating judgment stays out of scope by design.
