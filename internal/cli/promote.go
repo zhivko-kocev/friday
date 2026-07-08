@@ -56,10 +56,11 @@ func cmdPromote(args []string) int {
 		resolver = interactiveResolver()
 	}
 	changes, err := setupcmd.Promote(os.Stdin, cwd, setupcmd.PromoteOptions{
-		Agent:   o.agent,
-		DryRun:  o.dryRun,
-		Force:   o.force,
-		Filters: filters,
+		Agent:       o.agent,
+		DryRun:      o.dryRun,
+		Force:       o.force,
+		Interactive: !o.noInteractive,
+		Filters:     filters,
 	}, resolver)
 	if err != nil {
 		output.Err("%v", err)

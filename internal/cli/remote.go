@@ -9,6 +9,7 @@ import (
 	"github.com/zhivko-kocev/friday/internal/config"
 	"github.com/zhivko-kocev/friday/internal/git"
 	"github.com/zhivko-kocev/friday/internal/output"
+	"github.com/zhivko-kocev/friday/internal/ui"
 )
 
 // cmdRemote — git operations on the user store.
@@ -45,7 +46,7 @@ func cmdRemote(args []string) int {
 
 	switch args[0] {
 	case "pull":
-		if err := git.Pull(storeDir); err != nil {
+		if err := ui.WithSpinner("pulling latest changes", func() error { return git.Pull(storeDir) }); err != nil {
 			output.Err("%v", err)
 			return 1
 		}
@@ -69,7 +70,7 @@ func cmdRemote(args []string) int {
 			output.Err("commit message required: friday remote push -m \"...\"")
 			return 1
 		}
-		if err := git.StageCommitPush(storeDir, msg); err != nil {
+		if err := ui.WithSpinner("committing and pushing", func() error { return git.StageCommitPush(storeDir, msg) }); err != nil {
 			if errors.Is(err, git.ErrNothingToCommit) {
 				output.Skip("nothing to commit in %s", storeDir)
 				return 0
@@ -110,24 +111,61 @@ func cmdRemote(args []string) int {
 // MR server-side; other forges print their PR link in the push output. Once
 // the MR merges, `friday remote pull` fast-forwards and the local edits
 // coincide with the merged content.
+// proposeOpts backs both `remote propose` and the `share` porcelain, and is
+// the flagset the command table introspects for completion + `--help`.
+type proposeOpts struct {
+	message, messageLong, branch, target string
+}
+
+func proposeFlags(o *proposeOpts) *flag.FlagSet {
+	fs := flag.NewFlagSet("propose", flag.ContinueOnError)
+	// -m is short, --message is conventional; -m wins when both are set.
+	fs.StringVar(&o.message, "m", "", "commit message (required)")
+	fs.StringVar(&o.messageLong, "message", "", "alias for -m")
+	fs.StringVar(&o.branch, "branch", "", "remote branch name (default: friday/propose-<timestamp>)")
+	fs.StringVar(&o.target, "target", "", "MR target branch (default: the remote's HEAD branch)")
+	return fs
+}
+
+func (o *proposeOpts) msg() string {
+	if o.message != "" {
+		return o.message
+	}
+	return o.messageLong
+}
+
 func remotePropose(storeDir string, args []string) int {
-	fs := flag.NewFlagSet("remote propose", flag.ContinueOnError)
-	short := fs.String("m", "", "commit message (required)")
-	long := fs.String("message", "", "alias for -m")
-	branch := fs.String("branch", "", "remote branch name (default: friday/propose-<timestamp>)")
-	target := fs.String("target", "", "MR target branch (default: the remote's HEAD branch)")
+	var o proposeOpts
+	fs := proposeFlags(&o)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	msg := *short
-	if msg == "" {
-		msg = *long
-	}
-	if msg == "" {
-		output.Err("commit message required: friday remote propose -m \"...\"")
+	if o.msg() == "" {
+		output.Err("commit message required: pass -m \"...\"")
 		return 1
 	}
-	return proposeStore(storeDir, *branch, *target, msg)
+	return proposeStore(storeDir, o.branch, o.target, o.msg())
+}
+
+// cmdShare is the top-level porcelain for `remote propose`: propose your store
+// changes for team review without remembering the subcommand. Same guards,
+// same flags, same MR flow.
+func cmdShare(args []string) int {
+	storeDir, err := config.UserStoreDir()
+	if err != nil {
+		output.Err("%v", err)
+		return 1
+	}
+	if !git.Available() {
+		output.Err("git not found in PATH")
+		return 1
+	}
+	if !git.IsRepo(storeDir) {
+		output.Err("user store at %s is not a git repo", storeDir)
+		output.Dim("hint: run `friday init` and provide a remote URL to set up a git-backed store")
+		return 1
+	}
+	return remotePropose(storeDir, args)
 }
 
 // proposeStore runs the ephemeral-commit → remote-branch → MR flow. Shared
@@ -145,7 +183,12 @@ func proposeStore(storeDir, branch, target, msg string) int {
 		target = git.DefaultBranch(storeDir)
 	}
 
-	out, err := git.Propose(storeDir, branch, target, msg)
+	var out string
+	err := ui.WithSpinner("pushing proposal branch", func() error {
+		var e error
+		out, e = git.Propose(storeDir, branch, target, msg)
+		return e
+	})
 	if errors.Is(err, git.ErrNothingToCommit) {
 		output.Skip("nothing to propose in %s", storeDir)
 		return 0

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/zhivko-kocev/friday/internal/config"
@@ -42,17 +41,17 @@ func printAdapters() int {
 	for _, name := range cfg.AdapterNames() {
 		ad := cfg.Adapters[name]
 		abs, _ := cfg.AdapterTargetAbs(name)
-		marker := "missing"
 		if dirExists(abs) {
-			marker = "installed"
+			output.OK("%-12s target: %s", name, abs)
+		} else {
+			output.Skip("%-12s target: %s", name, abs)
 		}
-		fmt.Printf("  %-10s [%s]  target: %s\n", name, marker, abs)
 		for _, r := range ad.Rules {
 			strat := r.Strategy
 			if strat == "" {
 				strat = "copy"
 			}
-			fmt.Printf("             %s  %v → %s\n", strat, []string(r.From), r.To)
+			output.Dim("%s  %v → %s", strat, []string(r.From), r.To)
 		}
 	}
 	return 0

@@ -23,13 +23,15 @@ import (
 	"github.com/zhivko-kocev/friday/internal/output"
 	"github.com/zhivko-kocev/friday/internal/presets"
 	"github.com/zhivko-kocev/friday/internal/rules"
+	"github.com/zhivko-kocev/friday/internal/ui"
 )
 
 // Options controls a single setup run.
 type Options struct {
-	Agent  string // preset name; "" prompts
-	DryRun bool
-	Force  bool
+	Agent       string // preset name; "" prompts
+	DryRun      bool
+	Force       bool
+	Interactive bool // allow the rich TUI selection when the terminal supports it
 }
 
 // Item is one selectable piece of the store: the entry file, a single rule /
@@ -169,9 +171,11 @@ func Run(prompt io.Reader, cwd string, opts Options, onConflict engine.ConflictR
 
 	reader := bufio.NewReader(prompt)
 
+	tui := opts.Interactive && ui.Interactive()
+
 	agent := opts.Agent
 	if agent == "" {
-		if agent, err = chooseAgent(reader, presets.NamesWith(storeDir)); err != nil {
+		if agent, err = selectAgent(reader, presets.NamesWith(storeDir), tui); err != nil {
 			return nil, err
 		}
 	}
@@ -194,7 +198,7 @@ func Run(prompt io.Reader, cwd string, opts Options, onConflict engine.ConflictR
 	}
 
 	states := itemStates(preset, agent, items, storeDir, cwd)
-	selected, err := chooseItems(reader, items, states)
+	selected, err := selectItems(reader, items, states, tui)
 	if err != nil {
 		return nil, err
 	}
@@ -219,10 +223,11 @@ func projectConfig(agent string, ad *config.Adapter, storeDir, cwd string) *conf
 
 // PromoteOptions controls a promote run — setup's inverse.
 type PromoteOptions struct {
-	Agent   string // preset name; "" prompts
-	DryRun  bool
-	Force   bool
-	Filters []string // project-relative paths/globs to promote; empty = everything
+	Agent       string // preset name; "" prompts
+	DryRun      bool
+	Force       bool
+	Interactive bool     // allow the rich TUI agent picker when supported
+	Filters     []string // project-relative paths/globs to promote; empty = everything
 }
 
 // Promote captures project-level agent config back into the user store —
@@ -243,7 +248,7 @@ func Promote(prompt io.Reader, cwd string, opts PromoteOptions, onConflict engin
 
 	agent := opts.Agent
 	if agent == "" {
-		if agent, err = chooseAgent(bufio.NewReader(prompt), presets.NamesWith(storeDir)); err != nil {
+		if agent, err = selectAgent(bufio.NewReader(prompt), presets.NamesWith(storeDir), opts.Interactive && ui.Interactive()); err != nil {
 			return nil, err
 		}
 	}
@@ -315,6 +320,68 @@ func itemCoversAnySource(it Item, sources []string) bool {
 		}
 	}
 	return false
+}
+
+// selectAgent picks the agent via the rich TUI when the terminal supports it,
+// falling back to the numbered text prompt otherwise (pipes, CI, tests).
+func selectAgent(reader *bufio.Reader, names []string, tui bool) (string, error) {
+	if !tui {
+		return chooseAgent(reader, names)
+	}
+	choices := make([]ui.Choice, len(names))
+	for i, n := range names {
+		choices[i] = ui.Choice{Value: n, Label: n}
+	}
+	return ui.SelectOne("Which agent will this project use?", choices)
+}
+
+// selectItems is the TUI counterpart of chooseItems: a checkbox list where
+// items already present in the project start checked (a suggested set), each
+// labeled "category / name" with its in-sync/differs state.
+func selectItems(reader *bufio.Reader, items []Item, states map[int]string, tui bool) ([]Item, error) {
+	if !tui {
+		return chooseItems(reader, items, states)
+	}
+	// On a fresh project (nothing applied yet) suggest the universal baseline —
+	// core + rules — pre-checked; skills/agents stay opt-in. On a re-run, only
+	// what's already in the project is pre-checked.
+	fresh := len(states) == 0
+	choices := make([]ui.Choice, len(items))
+	for i, it := range items {
+		label := it.Category + " / " + it.Name
+		switch states[i] {
+		case "in-sync":
+			label += "  (applied)"
+		case "differs":
+			label += "  (differs)"
+		}
+		baseline := it.Category == "core" || it.Category == "rules"
+		choices[i] = ui.Choice{
+			Value: strconv.Itoa(i),
+			Label: label,
+			On:    states[i] != "" || (fresh && baseline),
+		}
+	}
+	vals, err := ui.MultiSelect("Select what to apply to this project", choices)
+	if err != nil {
+		return nil, err
+	}
+	// Return items in catalog order regardless of the order huh reports the
+	// selection — concatenate rules build their output in selected order, so
+	// this must match the text path (parseSelection sorts) or the two flows
+	// would generate differently ordered files.
+	idx := make([]int, 0, len(vals))
+	for _, v := range vals {
+		if i, err := strconv.Atoi(v); err == nil && i >= 0 && i < len(items) {
+			idx = append(idx, i)
+		}
+	}
+	sort.Ints(idx)
+	selected := make([]Item, 0, len(idx))
+	for _, i := range idx {
+		selected = append(selected, items[i])
+	}
+	return selected, nil
 }
 
 func chooseAgent(reader *bufio.Reader, names []string) (string, error) {

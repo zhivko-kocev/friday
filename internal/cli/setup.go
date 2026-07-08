@@ -47,9 +47,10 @@ func cmdSetup(args []string) int {
 		resolver = interactiveResolver()
 	}
 	changes, err := setupcmd.Run(os.Stdin, cwd, setupcmd.Options{
-		Agent:  o.agent,
-		DryRun: o.dryRun,
-		Force:  o.force,
+		Agent:       o.agent,
+		DryRun:      o.dryRun,
+		Force:       o.force,
+		Interactive: !o.noInteractive,
 	}, resolver)
 	if err != nil {
 		output.Err("%v", err)

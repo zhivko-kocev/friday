@@ -17,6 +17,7 @@ import (
 	"github.com/zhivko-kocev/friday/internal/git"
 	"github.com/zhivko-kocev/friday/internal/output"
 	"github.com/zhivko-kocev/friday/internal/presets"
+	"github.com/zhivko-kocev/friday/internal/ui"
 )
 
 // Run scaffolds (or clones into) the user-level store. Prompts on `prompt`
@@ -45,9 +46,18 @@ func Run(prompt io.Reader) error {
 	return cloneInto(storeDir, url)
 }
 
-// readRemoteURL prints the prompt and returns the trimmed first line. EOF
-// (no input piped, no terminal) is treated as blank — same as pressing Enter.
+// readRemoteURL asks for the store's git remote and returns the trimmed URL.
+// On a real terminal it uses the rich text input; otherwise it reads one line
+// (EOF — nothing piped — is treated as blank, same as pressing Enter to start
+// fresh).
 func readRemoteURL(in io.Reader) (string, error) {
+	if ui.Interactive() {
+		url, err := ui.Input("Remote repository URL (blank to start fresh)", "git@github.com:you/ai-config.git")
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(url), nil
+	}
 	output.Info("Remote repository URL (blank to start fresh):")
 	fmt.Print("  > ")
 	line, err := bufio.NewReader(in).ReadString('\n')
@@ -64,11 +74,10 @@ func cloneInto(storeDir, url string) error {
 	if err := git.ValidateURL(url); err != nil {
 		return err
 	}
-	output.Info("cloning %s", url)
 	if err := os.MkdirAll(filepath.Dir(storeDir), 0o755); err != nil {
 		return err
 	}
-	if err := git.Clone(url, storeDir); err != nil {
+	if err := ui.WithSpinner("cloning "+url, func() error { return git.Clone(url, storeDir) }); err != nil {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(storeDir, config.ManifestName)); err != nil {
