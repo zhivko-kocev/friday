@@ -85,6 +85,63 @@ func TestLintOversized(t *testing.T) {
 	}
 }
 
+func TestLintLongInstructions(t *testing.T) {
+	long := strings.Repeat("line\n", maxInstructionLines+5)
+	cfg := lintFixture(t, map[string]string{
+		"core.md":          long, // instruction file, over limit → flagged
+		"rules/general.md": long, // rule file, over limit → flagged
+		"notes/scratch.md": long, // not an instruction file → ignored
+	}, nil)
+	findings, _ := Run(cfg)
+	got := 0
+	for _, f := range findings {
+		if f.Rule == "long-instructions" {
+			got++
+			if f.Severity != Warn {
+				t.Errorf("long-instructions severity = %v, want warn", f.Severity)
+			}
+		}
+	}
+	if got != 2 {
+		t.Errorf("long-instructions fired %d times, want 2 (core.md + rules/general.md): %+v", got, findings)
+	}
+}
+
+func TestLintSkillDescription(t *testing.T) {
+	cfg := lintFixture(t, map[string]string{
+		"skills/good/SKILL.md":  "---\ndescription: Use this when preparing a release changelog from git history\n---\nbody\n",
+		"skills/empty/SKILL.md": "---\nname: empty\n---\nbody\n",
+		"skills/terse/SKILL.md": "---\ndescription: helps\n---\nbody\n",
+	}, nil)
+	findings, _ := Run(cfg)
+	flagged := map[string]bool{}
+	for _, f := range findings {
+		if f.Rule == "skill-description" {
+			flagged[f.Path] = true
+		}
+	}
+	if flagged["skills/good/SKILL.md"] {
+		t.Errorf("good skill wrongly flagged")
+	}
+	if !flagged["skills/empty/SKILL.md"] || !flagged["skills/terse/SKILL.md"] {
+		t.Errorf("missing/terse descriptions not flagged: %+v", findings)
+	}
+}
+
+func TestLintIgnoreConfig(t *testing.T) {
+	files := map[string]string{
+		"core.md":  "see [missing](nope.md)\n", // broken-ref
+		ConfigName: "disable:\n  - broken-ref\n",
+	}
+	cfg := lintFixture(t, files, nil)
+	findings, _ := Run(cfg)
+	for _, f := range findings {
+		if f.Rule == "broken-ref" {
+			t.Errorf("disabled rule still reported: %+v", findings)
+		}
+	}
+}
+
 func TestLintDestCollision(t *testing.T) {
 	cfg := lintFixture(t, map[string]string{
 		"a.md": "A",

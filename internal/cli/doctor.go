@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"github.com/zhivko-kocev/friday/internal/drift"
 	"github.com/zhivko-kocev/friday/internal/engine"
 	"github.com/zhivko-kocev/friday/internal/git"
+	"github.com/zhivko-kocev/friday/internal/lint"
 	"github.com/zhivko-kocev/friday/internal/output"
 	"github.com/zhivko-kocev/friday/internal/presets"
 )
@@ -23,9 +26,24 @@ import (
 // Exits non-zero only when something is actually broken; "no agents installed"
 // is informational, not an error.
 func cmdDoctor(args []string) int {
-	if len(args) > 0 {
-		output.Err("friday doctor takes no arguments")
+	var asJSON bool
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.BoolVar(&asJSON, "json", false, "machine-readable store-check findings (for CI)")
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
 		return 1
+	}
+	// `friday doctor <file>` explains which adapter + rule produces that file
+	// (the folded-in `explain`); with no args it runs the full health check.
+	if len(pos) == 1 {
+		return explainFile(pos[0])
+	}
+	if len(pos) > 1 {
+		output.Err("usage: friday doctor [target-file] [--json]")
+		return 1
+	}
+	if asJSON {
+		return doctorJSON()
 	}
 
 	output.Header("friday doctor")
@@ -129,12 +147,144 @@ func cmdDoctor(args []string) int {
 		}
 	}
 
+	// 8. store checks (the folded-in `lint` plus best-practice advice):
+	// structural errors fail the check; warnings are advisory.
+	output.Header("store checks")
+	if findings, err := lint.Run(cfg); err != nil {
+		output.Err("lint: %v", err)
+		bad++
+	} else if len(findings) == 0 {
+		output.OK("no issues")
+	} else {
+		warns := 0
+		for _, f := range findings {
+			if f.Severity == lint.Error {
+				output.Err("%-17s %s — %s", f.Rule, f.Path, f.Msg)
+				bad++
+			} else {
+				output.Warn("%-17s %s — %s", f.Rule, f.Path, f.Msg)
+				warns++
+			}
+		}
+		if warns > 0 {
+			output.Dim("%d advisory warning(s) — best practices, not failures; silence a rule in %s", warns, lint.ConfigName)
+		}
+	}
+
 	if bad > 0 {
 		fmt.Println()
 		output.Err("%d problem(s) detected", bad)
 		return 1
 	}
 	return 0
+}
+
+// findingJSON is the machine-readable shape of one store-check finding.
+type findingJSON struct {
+	Rule     string `json:"rule"`
+	Severity string `json:"severity"`
+	Path     string `json:"path"`
+	Message  string `json:"message"`
+}
+
+// doctorJSON emits the store-check findings as diagnostics for CI and exits 1
+// if any error-severity finding is present (warnings alone exit 0). The human
+// health check is skipped — this is the advisor's scriptable surface.
+func doctorJSON() int {
+	cfg, err := loadUserOrDefault()
+	if err != nil {
+		output.Err("%v", err)
+		return 1
+	}
+	findings, err := lint.Run(cfg)
+	if err != nil {
+		output.Err("%v", err)
+		return 1
+	}
+	out := struct {
+		Findings []findingJSON  `json:"findings"`
+		Summary  map[string]int `json:"summary"`
+	}{Findings: []findingJSON{}, Summary: map[string]int{"error": 0, "warn": 0}}
+	for _, f := range findings {
+		out.Findings = append(out.Findings, findingJSON{f.Rule, f.Severity.String(), f.Path, f.Msg})
+		out.Summary[f.Severity.String()]++
+	}
+	blob, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		output.Err("%v", err)
+		return 1
+	}
+	fmt.Println(string(blob))
+	if out.Summary["error"] > 0 {
+		return 1
+	}
+	return 0
+}
+
+// explainFile answers "which adapter + rule produced this file?" by planning
+// a dry-run push over every adapter — the same code path that writes, so there
+// is one source of truth for who writes what. Multiple matches all print: two
+// rules writing one destination is a misconfiguration this exists to expose.
+// Exposed as `friday doctor <file>`.
+func explainFile(arg string) int {
+	abs, err := filepath.Abs(arg)
+	if err != nil {
+		output.Err("%v", err)
+		return 1
+	}
+	cfg, err := loadUserOrDefault()
+	if err != nil {
+		output.Err("%v", err)
+		return 1
+	}
+	changes, err := engine.Push(cfg, engine.Options{DryRun: true})
+	if err != nil {
+		output.Err("%v", err)
+		return 1
+	}
+
+	found := 0
+	for _, ch := range changes {
+		if !samePath(ch.DestPath, abs) {
+			continue
+		}
+		found++
+		r := cfg.Adapters[ch.Adapter].Rules[ch.RuleIndex]
+		output.Header(ch.DestRel)
+		output.Info("adapter:   %s", ch.Adapter)
+		output.Info("rule:      from %v → %s  (strategy: %s)", []string(r.From), r.To, r.Strategy)
+		if len(r.FrontmatterStrip) > 0 {
+			output.Info("           frontmatter_strip: %v", r.FrontmatterStrip)
+		}
+		for k, v := range r.Replace {
+			output.Info("           replace: %q → %q", k, v)
+		}
+		output.Info("sources:   %s", strings.Join(ch.Sources, ", "))
+		output.Info("state:     %s", ch.Action)
+		if ch.Reason != "" {
+			output.Dim("           %s", ch.Reason)
+		}
+	}
+	if found == 0 {
+		output.Warn("no rule produces %s", abs)
+		suggestNearest(changes, arg)
+		return 1
+	}
+	if found > 1 {
+		output.Warn("%d rules write this file — later rules win; consider removing the overlap", found)
+	}
+	return 0
+}
+
+// suggestNearest points at planned destinations whose relative path ends in
+// the same basename, for the common "right file, wrong directory" miss.
+func suggestNearest(changes []engine.Change, arg string) {
+	base := filepath.Base(arg)
+	for _, ch := range changes {
+		if filepath.Base(ch.DestRel) == base {
+			output.Dim("did you mean %s (%s)?", ch.DestPath, ch.Adapter)
+		}
+	}
 }
 
 // checkEntryFiles reports on the store's entry file. Concatenate rules match
