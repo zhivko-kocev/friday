@@ -55,7 +55,7 @@ func TestPresetsEntryFilesAndReplace(t *testing.T) {
 func TestPresetCapabilityMatrix(t *testing.T) {
 	want := map[string][]string{
 		"claude":      {"rules/*.md", "agents/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md", "hooks/hooks.json"},
-		"codex":       {"rules/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
+		"codex":       {"rules/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md", "hooks/codex/hooks.json"},
 		"copilot":     {"rules/*.md", "agents/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
 		"opencode":    {"rules/*.md", "agents/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
 		"antigravity": {"rules/*.md", "commands/*.md", "standards/*.md", "connectors/*.md"},

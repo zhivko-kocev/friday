@@ -133,7 +133,7 @@ it (paths verified against each harness's docs):
 | `skills/`     | `skills/`   | `skills/`  | `skills/`          | `skills/`†  | —                       | `skills/`  |
 | `standards/`  | ✓           | ✓          | ✓                  | ✓           | ✓                       | ✓          |
 | `connectors/` | ✓           | ✓          | ✓                  | ✓           | ✓                       | ✓          |
-| `hooks/`      | `settings.json`‡ | —     | —                  | —           | —                       | —          |
+| `hooks/`      | `settings.json`‡ | `hooks.json`§ | —          | —           | —                       | —          |
 
 † frontmatter adapted to the harness's dialect. `—` means friday maps nothing
 there **yet** — not that the agent lacks the surface. Since this table was first
@@ -152,6 +152,14 @@ unattended. Every rule rewrites the Claude-plugin path variable
 `${CLAUDE_PLUGIN_ROOT}` to `~/.friday` on push (and back on pull), so
 knowledge repos authored as Claude Code plugins — like developer-os — work
 unmodified, and cross-references always resolve against the store.
+
+§ Non-Claude hooks are wired the same confirm-first way, from per-agent
+`hooks/<agent>/hooks.json` sources in the store that all invoke one shared
+guard script — its deny signal is selected per agent (`exit 2` for Codex;
+stdout JSON for Copilot/Antigravity). These dialects follow each agent's
+current docs; confirm the guard actually blocks on your live install (the
+Antigravity dialect in particular is corroborated only from secondary
+sources) — see [ROADMAP](ROADMAP.md).
 
 Paths verified against each agent's current documentation (Claude Code, [Codex CLI](https://developers.openai.com/codex/guides/agents-md), [OpenCode](https://opencode.ai/docs/config/), [Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions)).
 

@@ -76,7 +76,7 @@ var storeReplace = map[string]string{pluginRootMarker: "~/.friday"}
 //	skills/      skills/       skills/   skills/            skills/    —                           skills/
 //	standards/   ✓             ✓         ✓                  ✓          ✓                           ✓
 //	connectors/  ✓             ✓         ✓                  ✓          ✓                           ✓
-//	hooks/       settings.json —         —                  —          —                           —
+//	hooks/       settings.json hooks.json —                 —          —                           —
 //
 // standards/ and connectors/ have no native discovery mechanism anywhere, so
 // they land as reference copies in each agent's config home; the live copies
@@ -194,6 +194,21 @@ var registry = map[string]Preset{
 			{From: rules.FromSpec{"commands/*.md"}, To: "prompts/{filename}"},
 			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
 			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
+			// Codex CLI reads ~/.codex/hooks.json and runs the same PreToolUse
+			// hooks dialect as Claude Code (top-level `hooks` key; a matched
+			// PreToolUse command that exits 2 blocks the tool call). The store
+			// carries a Codex-shaped source that runs the shared guard in
+			// exit-2 mode; the plugin marker rewrites to $HOME/.friday like the
+			// claude rule. merge-json is push-only, drift-exempt, confirm-first.
+			// NOTE: the tool matcher ("Bash") and the exit-2 deny are per Codex's
+			// docs; verify against a live Codex install (see ROADMAP).
+			// https://learn.chatgpt.com/docs/hooks
+			{
+				From:     rules.FromSpec{"hooks/codex/hooks.json"},
+				To:       "hooks.json",
+				Strategy: rules.StrategyMergeJSON,
+				Replace:  map[string]string{pluginRootMarker: "$HOME/.friday"},
+			},
 		},
 		// Codex reads AGENTS.md at the repo root at project scope.
 		// https://developers.openai.com/codex/guides/agents-md
