@@ -9,7 +9,15 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+// DefaultProposeBranch is the timestamped branch name a proposal is pushed to
+// when the caller doesn't specify one. Centralized so `friday remote propose`
+// and the control room's `share` can't drift on the naming scheme.
+func DefaultProposeBranch() string {
+	return "friday/propose-" + time.Now().UTC().Format("20060102-150405")
+}
 
 // ErrNothingToCommit signals that StageCommitPush had no work to do.
 var ErrNothingToCommit = fmt.Errorf("nothing to commit")

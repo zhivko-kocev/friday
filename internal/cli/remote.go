@@ -4,7 +4,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"time"
 
 	"github.com/zhivko-kocev/friday/internal/config"
 	"github.com/zhivko-kocev/friday/internal/git"
@@ -177,7 +176,7 @@ func proposeStore(storeDir, branch, target, msg string) int {
 		return 1
 	}
 	if branch == "" {
-		branch = "friday/propose-" + time.Now().UTC().Format("20060102-150405")
+		branch = git.DefaultProposeBranch()
 	}
 	if target == "" {
 		target = git.DefaultBranch(storeDir)
