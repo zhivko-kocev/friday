@@ -38,7 +38,9 @@ func Pull(cfg *config.Config, opts Options) ([]Change, error) {
 
 // planner produces the change set for one adapter. planPush, planPull, and
 // planImport all satisfy it; runWith supplies the shared resolve/apply loop.
-type planner func(adapterName string, ad *config.Adapter, storeAbs, targetAbs string) ([]Change, error)
+// owned is friday's hook ownership cache (only planPush consults it, for
+// merge-json stale-entry removal; the others ignore it).
+type planner func(owned *drift.Owned, adapterName string, ad *config.Adapter, storeAbs, targetAbs string) ([]Change, error)
 
 func run(cfg *config.Config, opts Options, dir Direction) ([]Change, error) {
 	if dir == DirPull {
@@ -65,8 +67,13 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 	if err != nil {
 		return nil, fmt.Errorf("load drift store: %w", err)
 	}
+	owned, err := drift.LoadOwned(drift.OwnedPath(driftPath))
+	if err != nil {
+		return nil, fmt.Errorf("load hook owned-state: %w", err)
+	}
 
 	wrote := false
+	ownedChanged := false
 	var all []Change
 	for _, name := range adapters {
 		ad := cfg.Adapters[name]
@@ -75,7 +82,7 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 			return nil, err
 		}
 
-		changes, err := plan(name, ad, storeAbs, targetAbs)
+		changes, err := plan(owned, name, ad, storeAbs, targetAbs)
 		if err != nil {
 			return nil, fmt.Errorf("adapter %s: %w", name, err)
 		}
@@ -95,12 +102,20 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 			if ch.mergedPush {
 				prepareMergeWriteBack(ch, ad.Rules[ch.RuleIndex])
 			}
+			confirmDriftExemptWrite(ch, opts)
 			if !opts.DryRun {
 				didWrite, err := apply(ch, store, dir)
 				if err != nil {
 					return nil, fmt.Errorf("apply %s: %w", ch.DestPath, err)
 				}
 				wrote = wrote || didWrite
+				// Record friday's entries for a co-owned merge write so the next
+				// push can remove its own stale entries. Uses the same mergeSource
+				// the plan merged from, so plan and apply agree.
+				if didWrite && ch.driftExempt && (ch.Action == ActionCreate || ch.Action == ActionUpdate) {
+					owned.Set(ch.Adapter, ch.DestPath, ch.mergeSource)
+					ownedChanged = true
+				}
 				// Remember store files this pull actually captured, so a later
 				// adapter mapping the same file isn't planned against the
 				// content we just wrote. Nil map (non-pull, or a caller that
@@ -127,6 +142,11 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 		}
 		if err := store.Save(); err != nil {
 			warnf("failed to save drift store: %v", err)
+		}
+		if ownedChanged {
+			if err := owned.Save(); err != nil {
+				warnf("failed to save hook owned-state: %v", err)
+			}
 		}
 	}
 	return all, nil
@@ -185,6 +205,12 @@ func matchesAny(path string, globs []string) bool {
 // eats canonical edits when both sides have moved.
 func resolveConflict(ch *Change, store *drift.Store, opts Options) {
 	if ch.Action != ActionUpdate {
+		return
+	}
+	// A merge-json write preserves every key friday does not own and only
+	// rewrites its own, so there is nothing to clobber — it is never a drift
+	// conflict. (It also has no whole-file baseline to check against.)
+	if ch.driftExempt {
 		return
 	}
 	var drifted, exists bool
@@ -310,6 +336,35 @@ func prepareMergeWriteBack(ch *Change, r *rules.Rule) {
 	ch.Warning = "merge written to the target only — fold it into the store or the next push will flag this file again"
 }
 
+// confirmDriftExemptWrite gates a co-owned merge write (merge-json) behind the
+// caller's confirmation. Hook commands run arbitrary shell and a store may be a
+// clone of someone else's repo, so the default is NOT to write: a nil confirmer
+// or a declined prompt downgrades the change to a skip. --force bypasses the
+// gate; dry runs plan the real action and never prompt.
+func confirmDriftExemptWrite(ch *Change, opts Options) {
+	if opts.DryRun || opts.Force || !ch.driftExempt {
+		return
+	}
+	if ch.Action != ActionCreate && ch.Action != ActionUpdate {
+		return
+	}
+	if opts.ConfirmWrite != nil && opts.ConfirmWrite(WriteConfirmInfo{
+		Adapter:  ch.Adapter,
+		DestRel:  ch.DestRel,
+		DestPath: ch.DestPath,
+		Creating: ch.Action == ActionCreate,
+		Source:   ch.mergeSource,
+	}) {
+		return
+	}
+	ch.Action = ActionUnsupported
+	if opts.ConfirmWrite == nil {
+		ch.Reason = "hook wiring skipped — run `friday push` to review and wire (or --force)"
+	} else {
+		ch.Reason = "hook wiring declined"
+	}
+}
+
 // apply executes a single Change against disk. Returns true if a write
 // (file create/update or drift-store mutation) actually happened.
 func apply(ch *Change, store *drift.Store, dir Direction) (bool, error) {
@@ -330,6 +385,12 @@ func apply(ch *Change, store *drift.Store, dir Direction) (bool, error) {
 		switch dir {
 		case DirPush:
 			switch {
+			case ch.driftExempt:
+				// Co-owned merge (merge-json): friday owns only some keys, so a
+				// whole-file baseline would false-flag the user's edits to the
+				// other keys on the next push. The merge is idempotent and
+				// non-destructive, so it needs neither a baseline nor conflict
+				// tracking — the file is written, nothing is recorded.
 			case ch.storeWriteBack != nil:
 				// Merge resolution on an invertible rule: the store file
 				// gets the merge too, so both sides converge and the next
@@ -386,6 +447,12 @@ func apply(ch *Change, store *drift.Store, dir Direction) (bool, error) {
 // carries unsynced edits that must NOT be declared synced.
 func healBaselines(ch *Change, store *drift.Store, dir Direction) (recorded bool) {
 	if ch.staleTarget {
+		return false
+	}
+	// merge-json changes are deliberately un-baselined (see apply): a
+	// whole-file hash of a co-owned target would flag the user's own keys as
+	// drift. Never heal a baseline for them.
+	if ch.driftExempt {
 		return false
 	}
 	switch dir {

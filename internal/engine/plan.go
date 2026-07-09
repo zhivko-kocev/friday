@@ -9,13 +9,14 @@ import (
 
 	"github.com/zhivko-kocev/friday/internal/config"
 	"github.com/zhivko-kocev/friday/internal/conflict"
+	"github.com/zhivko-kocev/friday/internal/drift"
 	"github.com/zhivko-kocev/friday/internal/frontmatter"
 	"github.com/zhivko-kocev/friday/internal/rules"
 )
 
 // planPush walks one adapter's rules and produces the changes that a push
 // would perform — without writing anything or consulting the drift store.
-func planPush(adapterName string, ad *config.Adapter, storeAbs, targetAbs string) ([]Change, error) {
+func planPush(owned *drift.Owned, adapterName string, ad *config.Adapter, storeAbs, targetAbs string) ([]Change, error) {
 	var out []Change
 	for i, r := range ad.Rules {
 		var chs []Change
@@ -32,6 +33,12 @@ func planPush(adapterName string, ad *config.Adapter, storeAbs, targetAbs string
 			if err != nil {
 				return nil, err
 			}
+		case rules.StrategyMergeJSON:
+			ch, err := planMergeJSON(owned, adapterName, r, storeAbs, targetAbs)
+			if err != nil {
+				return nil, err
+			}
+			chs = []Change{ch}
 		default:
 			return nil, fmt.Errorf("adapter %s: unknown strategy %q", adapterName, r.Strategy)
 		}
@@ -190,11 +197,116 @@ func planCopy(adapterName string, r *rules.Rule, storeAbs, targetAbs string) ([]
 	return out, nil
 }
 
+// planMergeJSON wires the single source JSON file's top-level keys into a
+// co-owned target JSON file (e.g. hooks.json → settings.json). Only friday's
+// keys are overwritten; the target's other keys pass through untouched, which
+// is why the change is drift-exempt. The InSync test canonicalizes the existing
+// target so the agent's own formatting (key order, indent) never reads as drift.
+// A non-empty but unparseable target is an error — friday writes nothing rather
+// than clobber a file whose contents it cannot understand.
+func planMergeJSON(owned *drift.Owned, adapterName string, r *rules.Rule, storeAbs, targetAbs string) (Change, error) {
+	src := r.From[0]
+	srcAbs := filepath.Join(storeAbs, filepath.FromSlash(src))
+	dest := filepath.Join(targetAbs, filepath.FromSlash(r.To))
+	// prev is friday's last-written source for this target (nil on first push or
+	// a cleared cache). It lets the merge drop friday's own stale entries after a
+	// store edit; without it the merge still preserves user hooks and stays
+	// idempotent, it just can't remove a since-changed entry.
+	var prev []byte
+	if owned != nil {
+		prev = owned.Get(adapterName, dest)
+	}
+	ch := Change{
+		Adapter:     adapterName,
+		Direction:   DirPush,
+		Sources:     []string{src},
+		DestPath:    dest,
+		DestRel:     r.To,
+		driftExempt: true,
+	}
+
+	info, err := os.Stat(srcAbs)
+	if err != nil {
+		if os.IsNotExist(err) {
+			ch.Action = ActionMissingSource
+			ch.Reason = fmt.Sprintf("no source file at %q", src)
+			return ch, nil
+		}
+		return ch, fmt.Errorf("stat %s: %w", src, err)
+	}
+	raw, err := os.ReadFile(srcAbs)
+	if err != nil {
+		return ch, fmt.Errorf("read %s: %w", src, err)
+	}
+	ch.SrcAbs = srcAbs
+	ch.SrcContent = raw
+	source := r.ApplyReplace(raw)
+	ch.mergeSource = source
+
+	old, err := os.ReadFile(dest)
+	switch {
+	case os.IsNotExist(err):
+		merged, err := mergeEntries(nil, source, prev)
+		if err != nil {
+			// Unparseable store JSON is the user's to fix; skip this one write
+			// rather than abort the whole run (and never clobber the target).
+			ch.Action = ActionUnsupported
+			ch.Reason = fmt.Sprintf("cannot merge %s: %v", src, err)
+			return ch, nil
+		}
+		ch.NewContent = merged
+		ch.Action = ActionCreate
+		ch.Mode = info.Mode().Perm()
+	case err != nil:
+		return ch, fmt.Errorf("read %s: %w", dest, err)
+	default:
+		ch.OldContent = old
+		if fi, serr := os.Stat(dest); serr == nil {
+			// Preserve the target's mode — settings.json may be 0600.
+			ch.Mode = fi.Mode().Perm()
+		}
+		merged, err := mergeEntries(old, source, prev)
+		if err != nil {
+			// A hand-edited, unparseable settings.json (or a broken store file):
+			// surface it as a skip so unrelated adapters still sync, and write
+			// nothing rather than overwrite a file friday can't understand.
+			ch.Action = ActionUnsupported
+			ch.Reason = fmt.Sprintf("%s: %v — fix the JSON, then push", r.To, err)
+			return ch, nil
+		}
+		// mergeEntries already parsed old, so canonicalize won't fail here.
+		canonOld, err := canonicalize(old)
+		if err != nil {
+			ch.Action = ActionUnsupported
+			ch.Reason = fmt.Sprintf("%s is not valid JSON: %v", r.To, err)
+			return ch, nil
+		}
+		ch.NewContent = merged
+		if equalNormalized(canonOld, merged) {
+			ch.Action = ActionInSync
+		} else {
+			ch.Action = ActionUpdate
+		}
+	}
+	return ch, nil
+}
+
 // planPull reverses each rule: target file → store file. Concatenate rules and
 // rules with frontmatter_strip are skipped (lossy in reverse).
-func planPull(adapterName string, ad *config.Adapter, storeAbs, targetAbs string) ([]Change, error) {
+func planPull(_ *drift.Owned, adapterName string, ad *config.Adapter, storeAbs, targetAbs string) ([]Change, error) {
 	var out []Change
 	for ri, r := range ad.Rules {
+		if r.Strategy == rules.StrategyMergeJSON {
+			out = append(out, Change{
+				Adapter:   adapterName,
+				Direction: DirPull,
+				RuleIndex: ri,
+				DestRel:   r.To,
+				Action:    ActionUnsupported,
+				Reason:    "merge-json rule cannot be pulled (the target co-owns keys friday does not manage)",
+			})
+			continue
+		}
 		if r.Strategy == rules.StrategyConcatenate {
 			out = append(out, Change{
 				Adapter:   adapterName,

@@ -14,6 +14,11 @@ import (
 const (
 	StrategyCopy        = "copy"
 	StrategyConcatenate = "concatenate"
+	// StrategyMergeJSON merges the top-level keys of a single source JSON
+	// file into a co-owned target JSON file (e.g. the store's hooks.json
+	// into ~/.claude/settings.json). It is push-only and exempt from the
+	// whole-file drift model — see engine.planMergeJSON.
+	StrategyMergeJSON = "merge-json"
 
 	DefaultSeparator = "\n\n---\n\n"
 )
@@ -72,9 +77,9 @@ func (r *Rule) Normalize() error {
 		r.Strategy = StrategyCopy
 	}
 	switch r.Strategy {
-	case StrategyCopy, StrategyConcatenate:
+	case StrategyCopy, StrategyConcatenate, StrategyMergeJSON:
 	default:
-		return fmt.Errorf("unknown strategy %q (must be copy or concatenate)", r.Strategy)
+		return fmt.Errorf("unknown strategy %q (must be copy, concatenate or merge-json)", r.Strategy)
 	}
 	if len(r.From) == 0 {
 		return fmt.Errorf("rule.from is required")
@@ -84,6 +89,25 @@ func (r *Rule) Normalize() error {
 	}
 	if r.Strategy == StrategyConcatenate && hasToken(r.To) {
 		return fmt.Errorf("concatenate rule.to %q cannot contain tokens (single output file)", r.To)
+	}
+	// merge-json reads exactly one source JSON file and writes one literal
+	// target: globs, tokens, and the text-oriented options are meaningless.
+	if r.Strategy == StrategyMergeJSON {
+		if len(r.From) != 1 || hasWildcard(r.From[0]) {
+			return fmt.Errorf("merge-json rule.from must be a single non-glob path")
+		}
+		if hasToken(r.To) {
+			return fmt.Errorf("merge-json rule.to %q cannot contain tokens (single output file)", r.To)
+		}
+		if len(r.FrontmatterStrip) > 0 {
+			return fmt.Errorf("merge-json does not support frontmatter_strip")
+		}
+		if r.Separator != "" {
+			return fmt.Errorf("merge-json does not support separator")
+		}
+		if r.MaxBytes != 0 {
+			return fmt.Errorf("merge-json does not support max_bytes")
+		}
 	}
 	if r.MaxBytes < 0 {
 		return fmt.Errorf("max_bytes cannot be negative")

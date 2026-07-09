@@ -4,9 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/zhivko-kocev/friday/internal/engine"
 	"github.com/zhivko-kocev/friday/internal/presets"
 )
 
@@ -162,12 +164,91 @@ func TestFilterAdapterReportsUnmappedItems(t *testing.T) {
 	}
 }
 
+// isolateCache points the drift store at a temp dir so a real apply never
+// touches the developer's cache.
+func isolateCache(t *testing.T) {
+	t.Helper()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if runtime.GOOS == "windows" {
+		t.Setenv("LocalAppData", t.TempDir())
+	}
+}
+
+// TestRunWiresProjectHooks proves setup, once confirmed, copies the hook scripts
+// into the repo and wires .claude/settings.json to run them via the project path
+// variable — the shareable, in-repo form for project scope.
+func TestRunWiresProjectHooks(t *testing.T) {
+	withStore(t, map[string]string{
+		"core/core.md":               "# Core",
+		"hooks/hooks.json":           `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/git-guard.sh"}]}]}}`,
+		"hooks/scripts/git-guard.sh": "#!/usr/bin/env bash\necho guard\n",
+	})
+	isolateCache(t)
+	project := t.TempDir()
+
+	approve := func(engine.WriteConfirmInfo) bool { return true }
+	if _, err := Run(strings.NewReader("all\n"), project, Options{Agent: "claude"}, nil, approve); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "hooks", "scripts", "git-guard.sh")); err != nil {
+		t.Errorf("hook script not copied into the project: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(project, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("settings.json not wired: %v", err)
+	}
+	if !strings.Contains(string(got), "${CLAUDE_PROJECT_DIR}/.claude/hooks/scripts/git-guard.sh") {
+		t.Errorf("hook command is not project-relative: %s", got)
+	}
+}
+
+// TestRunWiresProjectHooksWithNeighborFile guards the ruleCovers fix: a file
+// under hooks/ that sorts before hooks.json becomes the catalog probe, but the
+// merge-json rule must still be included so settings.json gets wired.
+func TestRunWiresProjectHooksWithNeighborFile(t *testing.T) {
+	withStore(t, map[string]string{
+		"core/core.md":               "# Core",
+		"hooks/aaa-config.json":      `{"note":"sorts before hooks.json"}`,
+		"hooks/hooks.json":           `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/git-guard.sh"}]}]}}`,
+		"hooks/scripts/git-guard.sh": "#!/usr/bin/env bash\necho guard\n",
+	})
+	isolateCache(t)
+	project := t.TempDir()
+
+	approve := func(engine.WriteConfirmInfo) bool { return true }
+	if _, err := Run(strings.NewReader("all\n"), project, Options{Agent: "claude"}, nil, approve); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "settings.json")); err != nil {
+		t.Errorf("settings.json not wired despite a hooks/ neighbor sorting before hooks.json: %v", err)
+	}
+}
+
+// TestRunSkipsHooksWhenDeclined proves the confirm-first safety holds in setup:
+// declining leaves no settings.json.
+func TestRunSkipsHooksWhenDeclined(t *testing.T) {
+	withStore(t, map[string]string{
+		"core/core.md":     "# Core",
+		"hooks/hooks.json": `{"hooks":{"PreToolUse":[]}}`,
+	})
+	isolateCache(t)
+	project := t.TempDir()
+
+	decline := func(engine.WriteConfirmInfo) bool { return false }
+	if _, err := Run(strings.NewReader("all\n"), project, Options{Agent: "claude"}, nil, decline); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Error("settings.json wired despite the confirm being declined")
+	}
+}
+
 func TestRunEndToEnd(t *testing.T) {
 	withStore(t, storeFixture)
 	project := t.TempDir()
 
 	// Script: agent prompt answered by --agent; item prompt selects all.
-	changes, err := Run(strings.NewReader("all\n"), project, Options{Agent: "claude"}, nil)
+	changes, err := Run(strings.NewReader("all\n"), project, Options{Agent: "claude"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +275,7 @@ func TestRunEndToEnd(t *testing.T) {
 	}
 
 	// Re-run with the same selection: everything in-sync, nothing rewritten.
-	changes, err = Run(strings.NewReader("all\n"), project, Options{Agent: "claude"}, nil)
+	changes, err = Run(strings.NewReader("all\n"), project, Options{Agent: "claude"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +292,7 @@ func TestRunSubsetSelection(t *testing.T) {
 
 	// Items order: core, agents/architect, rules/general, skills/onboard, skills/start-day.
 	// Select only the core entry (index 1).
-	if _, err := Run(strings.NewReader("1\n"), project, Options{Agent: "claude"}, nil); err != nil {
+	if _, err := Run(strings.NewReader("1\n"), project, Options{Agent: "claude"}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(project, "CLAUDE.md")); err != nil {
@@ -224,7 +305,7 @@ func TestRunSubsetSelection(t *testing.T) {
 
 func TestRunUnknownAgent(t *testing.T) {
 	withStore(t, storeFixture)
-	if _, err := Run(strings.NewReader("\n"), t.TempDir(), Options{Agent: "nope"}, nil); err == nil {
+	if _, err := Run(strings.NewReader("\n"), t.TempDir(), Options{Agent: "nope"}, nil, nil); err == nil {
 		t.Fatal("expected unknown-agent error")
 	}
 }
@@ -233,7 +314,7 @@ func TestRunNoStore(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	if _, err := Run(strings.NewReader("\n"), t.TempDir(), Options{Agent: "claude"}, nil); err == nil {
+	if _, err := Run(strings.NewReader("\n"), t.TempDir(), Options{Agent: "claude"}, nil, nil); err == nil {
 		t.Fatal("expected missing-store error")
 	}
 }

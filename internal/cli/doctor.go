@@ -15,6 +15,7 @@ import (
 	"github.com/zhivko-kocev/friday/internal/lint"
 	"github.com/zhivko-kocev/friday/internal/output"
 	"github.com/zhivko-kocev/friday/internal/presets"
+	"github.com/zhivko-kocev/friday/internal/rules"
 )
 
 // cmdDoctor runs a read-only health check on the local install. Surfaces:
@@ -81,9 +82,10 @@ func cmdDoctor(args []string) int {
 		output.Warn("git: not in PATH — `friday remote` will not work")
 	}
 
-	// 3. entry file (core.md / core/core.md / legacy identity.md) + hooks
+	// 3. entry file (core.md / core/core.md / legacy identity.md).
+	// Hooks state is reported alongside drift below, where the config and the
+	// dry-run plan are already available.
 	checkEntryFiles(storeDir)
-	checkHooks(storeDir)
 
 	// 4. manifest
 	cfg, err := config.LoadUser()
@@ -139,6 +141,7 @@ func cmdDoctor(args []string) int {
 			} else {
 				output.Dim("hint: `friday pull <adapter>` to capture edits, or `friday push --force` to overwrite")
 			}
+			reportHooks(cfg, changes)
 		}
 	}
 
@@ -314,11 +317,66 @@ func checkEntryFiles(storeDir string) {
 	}
 }
 
-// checkHooks flags a limitation pushes can't fix: Claude Code auto-loads
-// hooks.json only from plugins. The store's hooks stay in ~/.friday/hooks/;
-// wiring them up means adding entries to ~/.claude/settings.json by hand.
-func checkHooks(storeDir string) {
-	if _, err := os.Stat(filepath.Join(storeDir, "hooks", "hooks.json")); err == nil {
-		output.Dim("hooks: store ships hooks/hooks.json — Claude Code only auto-loads plugin hooks; add entries to ~/.claude/settings.json pointing at %s manually", filepath.Join(storeDir, "hooks"))
+// reportHooks surfaces the state of merge-json hook wiring. Claude Code
+// activates only the hooks declared in settings.json, so the claude preset
+// merges the store's hooks.json into it. This reads the same dry-run plan the
+// drift check uses: an in-sync merge-json change means the store's hooks are
+// wired and current; a create/update means a push would (re)wire them. Stores
+// with no hooks produce a missing-source change and print nothing.
+func reportHooks(cfg *config.Config, changes []engine.Change) {
+	printed := false
+	header := func() {
+		if !printed {
+			output.Header("hooks")
+			printed = true
+		}
 	}
+	for _, ch := range changes {
+		ad, ok := cfg.Adapters[ch.Adapter]
+		if !ok || ch.RuleIndex < 0 || ch.RuleIndex >= len(ad.Rules) {
+			continue
+		}
+		r := ad.Rules[ch.RuleIndex]
+		if r.Strategy != rules.StrategyMergeJSON {
+			continue
+		}
+		switch ch.Action {
+		case engine.ActionInSync:
+			header()
+			output.OK("%s: wired into %s and current", ch.Adapter, ch.DestRel)
+		case engine.ActionCreate, engine.ActionUpdate:
+			header()
+			output.Warn("%s: %s is out of date — run `friday push %s` to wire the store's hooks", ch.Adapter, ch.DestRel, ch.Adapter)
+		}
+		// A hook command that references an expandable path unquoted breaks when
+		// the path contains a space (e.g. a home dir like "C:/Users/First Last").
+		if src, err := os.ReadFile(filepath.Join(cfg.StoreDir, filepath.FromSlash(r.From[0]))); err == nil {
+			for _, cmd := range engine.HookCommands(src) {
+				if unquotedExpansion(cmd) {
+					header()
+					output.Warn("%s: hook command is unquoted and will break on a path with spaces:", ch.Adapter)
+					output.Dim("  %s", cmd)
+					output.Dim("  quote it in %s, e.g. bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/...\"", r.From[0])
+					break
+				}
+			}
+		}
+	}
+}
+
+// unquotedExpansion reports whether a hook command references a shell-expandable
+// path (which may expand to a value containing a space) without any quoting. The
+// heuristic is deliberately simple: a command that names such a path but has no
+// double quote at all is the footgun (`bash $HOME/x/y.sh` splits when $HOME has
+// a space). A quoted command — `bash "$HOME/x/y.sh"` — is left alone.
+func unquotedExpansion(cmd string) bool {
+	if strings.Contains(cmd, "\"") {
+		return false
+	}
+	for _, m := range []string{"$HOME", "${CLAUDE_PROJECT_DIR}", "${CLAUDE_PLUGIN_ROOT}", "~/"} {
+		if strings.Contains(cmd, m) {
+			return true
+		}
+	}
+	return false
 }

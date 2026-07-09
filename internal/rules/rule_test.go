@@ -40,6 +40,13 @@ func TestNormalize(t *testing.T) {
 		{"unknown strategy", Rule{From: FromSpec{"a.md"}, To: "b.md", Strategy: "merge"}, true},
 		{"concatenate to with token rejected", Rule{From: FromSpec{"a"}, To: "x/{filename}", Strategy: StrategyConcatenate}, true},
 		{"concatenate to literal ok", Rule{From: FromSpec{"a"}, To: "x.md", Strategy: StrategyConcatenate}, false},
+		{"merge-json ok", Rule{From: FromSpec{"hooks/hooks.json"}, To: "settings.json", Strategy: StrategyMergeJSON}, false},
+		{"merge-json rejects glob from", Rule{From: FromSpec{"hooks/*.json"}, To: "settings.json", Strategy: StrategyMergeJSON}, true},
+		{"merge-json rejects multi from", Rule{From: FromSpec{"a.json", "b.json"}, To: "settings.json", Strategy: StrategyMergeJSON}, true},
+		{"merge-json rejects to token", Rule{From: FromSpec{"a.json"}, To: "{filename}", Strategy: StrategyMergeJSON}, true},
+		{"merge-json rejects frontmatter_strip", Rule{From: FromSpec{"a.json"}, To: "settings.json", Strategy: StrategyMergeJSON, FrontmatterStrip: []string{"x"}}, true},
+		{"merge-json rejects separator", Rule{From: FromSpec{"a.json"}, To: "settings.json", Strategy: StrategyMergeJSON, Separator: "X"}, true},
+		{"merge-json rejects max_bytes", Rule{From: FromSpec{"a.json"}, To: "settings.json", Strategy: StrategyMergeJSON, MaxBytes: 10}, true},
 	}
 	for _, c := range cases {
 		err := c.r.Normalize()

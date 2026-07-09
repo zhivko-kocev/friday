@@ -116,7 +116,7 @@ agents/*.md          Claude subagent definitions
 commands/*.md        Claude slash commands
 skills/<name>/       Agent skills (Claude + OpenCode)
 standards/*.md       Per-language baselines — stay in the store, reached by reference
-hooks/**             Hook config + scripts — stay in the store (see `friday doctor`)
+hooks/**             hooks.json is merged into ~/.claude/settings.json (confirm-first); scripts run from the store
 friday.yaml          Adapter manifest. Auto-seeded by `friday init` with all built-in presets.
 ```
 
@@ -133,12 +133,18 @@ it (paths verified against each harness's docs):
 | `skills/`     | `skills/`   | `skills/`  | `skills/`          | `skills/`†  | —                    | —                       | `skills/`  |
 | `standards/`  | ✓           | ✓          | ✓                  | ✓           | ✓                    | ✓                       | ✓          |
 | `connectors/` | ✓           | ✓          | ✓                  | ✓           | ✓                    | ✓                       | ✓          |
-| `hooks/`      | `hooks/`    | —          | —                  | —           | —                    | —                       | —          |
+| `hooks/`      | `settings.json`‡ | —     | —                  | —           | —                    | —                       | —          |
 
 † frontmatter adapted to the harness's dialect. `—` means the harness has no
 documented surface for that content. `standards/` and `connectors/` have no
 native discovery mechanism anywhere, so they land as reference copies in each
-agent's config home. Every rule rewrites the Claude-plugin path variable
+agent's config home.
+
+‡ Claude Code activates only the hooks declared in `settings.json`, so friday
+merges `hooks/hooks.json` into its `hooks` key rather than dropping an inert
+copy. Because hook commands run arbitrary shell, `friday push` shows the exact
+commands and asks before wiring; a cloned store never registers commands
+unattended. Every rule rewrites the Claude-plugin path variable
 `${CLAUDE_PLUGIN_ROOT}` to `~/.friday` on push (and back on pull), so
 knowledge repos authored as Claude Code plugins — like developer-os — work
 unmodified, and cross-references always resolve against the store.

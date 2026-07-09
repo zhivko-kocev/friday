@@ -39,7 +39,7 @@ Codex, OpenCode, Copilot, and the rest from drifting apart.
   commands/*.md      slash commands / prompts
   skills/<name>/     agent skills, mirrored verbatim (frontmatter trimmed per agent)
   standards/*.md     per-language baselines — stay in the store, reached by reference
-  hooks/**           hook config + scripts — stay in the store
+  hooks/**           hooks.json merged into ~/.claude/settings.json (confirm-first); scripts run from the store
   connectors/*.md    connector docs — reference copies
   friday.yaml        adapter manifest (optional; auto-seeded on `init --scaffold`)
   .friday-doctor.yaml  optional lint config (see the advisor)
@@ -424,9 +424,10 @@ friday remote status
 
 **Three modes:**
 1. **`friday doctor`** — a full health check: store presence, git status, entry
-   file, hooks note, manifest validity, per-adapter installed/missing, drift
-   across installed agents, the drift cache location, and the **store checks**
-   (the best-practice advisor — see below).
+   file, manifest validity, per-adapter installed/missing, drift across
+   installed agents, hooks-wiring state (whether `settings.json` carries the
+   store's hooks and is current), the drift cache location, and the **store
+   checks** (the best-practice advisor — see below).
 2. **`friday doctor <file>`** — explain which adapter + rule produced a target
    file, from which sources (the folded-in `explain`). Handy for "why does
    `~/.claude/CLAUDE.md` contain this?"

@@ -72,6 +72,15 @@ type Change struct {
 	mergedPush     bool   // ConflictUseMerged on push: NewContent is the merge result
 	storeWriteBack []byte // push-merge on an invertible rule: content for SrcAbs
 	staleTarget    bool   // pull downgraded because the target never drifted
+	// driftExempt marks a change against a co-owned file (merge-json): the
+	// write only touches friday's own keys and preserves the rest, so it needs
+	// no whole-file drift baseline and never surfaces as a conflict. Set by
+	// planMergeJSON; honored in resolveConflict and apply.
+	driftExempt bool
+	// mergeSource is the store JSON being merged in (after replace), kept so a
+	// confirmer can describe a drift-exempt write (e.g. list the hook commands)
+	// before it lands. Set by planMergeJSON; never rendered by the report.
+	mergeSource []byte
 }
 
 // ConflictChoice is the engine-level outcome of a drift resolution prompt.
@@ -122,6 +131,24 @@ type ConflictInfo struct {
 // side. A nil resolver (non-interactive mode) surfaces drift as Conflict.
 type ConflictResolver func(ConflictInfo) Resolution
 
+// WriteConfirmInfo describes a drift-exempt co-owned write (merge-json) about to
+// land, so the caller can confirm before content that may execute arbitrary
+// shell — hook commands — is installed. Source is the store JSON being merged
+// in (after replace); the caller renders it to describe the write.
+type WriteConfirmInfo struct {
+	Adapter  string
+	DestRel  string
+	DestPath string
+	Creating bool // the target does not exist yet
+	Source   []byte
+}
+
+// ConfirmWriter approves a drift-exempt co-owned write. Returning false skips
+// it. A nil confirmer (non-interactive mode) skips every such write: friday
+// never silently installs hook commands, which is the safe default when a store
+// may be a clone of someone else's repo. --force bypasses the confirmer.
+type ConfirmWriter func(WriteConfirmInfo) bool
+
 // Options controls a single Push/Pull/Status invocation.
 type Options struct {
 	Adapters   []string // empty = all adapters in config
@@ -133,6 +160,10 @@ type Options struct {
 	// BaseLookup resolves a drift baseline hash to its content (snapshot
 	// blob store). Nil disables merge-base recovery.
 	BaseLookup func(hash string) ([]byte, bool)
+	// ConfirmWrite gates drift-exempt co-owned writes (merge-json hook wiring).
+	// Nil skips them — friday never installs hook commands unattended. Ignored
+	// under --force (Force) and on dry runs.
+	ConfirmWrite ConfirmWriter
 	// Warnf, when non-nil, receives non-fatal advisories the engine would
 	// otherwise print through internal/output (currently only a drift-store
 	// save failure after a successful apply). The CLI leaves it nil and keeps

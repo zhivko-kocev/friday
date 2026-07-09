@@ -69,6 +69,7 @@ func runPush(cfg *config.Config, adapters []string, o pushOpts) int {
 	if !o.noInteractive {
 		opts.OnConflict = interactiveResolver()
 		opts.BaseLookup = baseLookup()
+		opts.ConfirmWrite = hookWriteConfirmer()
 	}
 
 	changes, err := engine.Push(cfg, opts)

@@ -45,7 +45,7 @@ func TestPlanPushCopy(t *testing.T) {
 			{From: rules.FromSpec{"rules/*.md"}, To: "rules/{filename}", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planPush("test", ad, storeAbs, targetAbs)
+	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestPlanPushConcatenate(t *testing.T) {
 			},
 		},
 	}
-	changes, err := planPush("test", ad, storeAbs, targetAbs)
+	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestPlanPushInSync(t *testing.T) {
 			{From: rules.FromSpec{"a.md"}, To: "a.md", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, _ := planPush("test", ad, storeAbs, targetAbs)
+	changes, _ := planPush(nil, "test", ad, storeAbs, targetAbs)
 	if len(changes) != 1 || changes[0].Action != ActionInSync {
 		t.Errorf("got %+v, want one in-sync change", changes)
 	}
@@ -122,7 +122,7 @@ func TestPlanPullSkipsConcatenate(t *testing.T) {
 			},
 		},
 	}
-	changes, err := planPull("test", ad, storeAbs, targetAbs)
+	changes, err := planPull(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestPlanPullCopy(t *testing.T) {
 			{From: rules.FromSpec{"a.md"}, To: "a.md", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planPull("test", ad, storeAbs, targetAbs)
+	changes, err := planPull(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestPlanPushReplace(t *testing.T) {
 			{From: rules.FromSpec{"skills/*.md"}, To: "skills/{filename}", Strategy: rules.StrategyCopy, Replace: replace},
 		},
 	}
-	changes, err := planPush("test", ad, storeAbs, targetAbs)
+	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestPlanPullReplaceRoundTrip(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(targetAbs, "skills", "s.md"), []byte("Follow ~/.claude/core/core.md"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changes, err := planPull("test", ad, storeAbs, targetAbs)
+	changes, err := planPull(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestPlanPullReplaceRoundTrip(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(targetAbs, "skills", "s.md"), []byte("edited: see ~/.claude/standards/go.md"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changes, err = planPull("test", ad, storeAbs, targetAbs)
+	changes, err = planPull(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestPlanPullReplaceNaturalValueUntouched(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(targetAbs, "skills", "s.md"), []byte(pushed), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changes, err := planPull("test", ad, storeAbs, targetAbs)
+	changes, err := planPull(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestPlanPullMissingTargetSkipped(t *testing.T) {
 			{From: rules.FromSpec{"a.md"}, To: "a.md", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planPull("test", ad, storeAbs, targetAbs)
+	changes, err := planPull(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +310,7 @@ func TestPlanConcatenateMaxBytesWarning(t *testing.T) {
 			{From: rules.FromSpec{"core.md"}, To: "out.md", Strategy: rules.StrategyConcatenate, MaxBytes: 50},
 		},
 	}
-	changes, err := planPush("test", ad, storeAbs, targetAbs)
+	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestPlanConcatenateMaxBytesWarning(t *testing.T) {
 	}
 	// Under the limit: no warning.
 	ad.Rules[0].MaxBytes = 200
-	changes, _ = planPush("test", ad, storeAbs, targetAbs)
+	changes, _ = planPush(nil, "test", ad, storeAbs, targetAbs)
 	if changes[0].Warning != "" {
 		t.Errorf("Warning = %q, want none under the limit", changes[0].Warning)
 	}
@@ -342,7 +342,7 @@ func TestPlanCopyLiteralToFirstVariantWins(t *testing.T) {
 			{From: rules.FromSpec{"core.md", "core/core.md", "identity.md"}, To: "AGENTS.md", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planPush("test", ad, storeAbs, targetAbs)
+	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +368,7 @@ func TestPlanPullLiteralToCapturesPreferredVariantOnly(t *testing.T) {
 			{From: rules.FromSpec{"core.md", "core/core.md", "identity.md"}, To: "AGENTS.md", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planPull("test", ad, storeAbs, targetAbs)
+	changes, err := planPull(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +388,7 @@ func TestPlanCopyTokenizedToReportsMissingPerPattern(t *testing.T) {
 			{From: rules.FromSpec{"rules/*.md", "standrds/*.md"}, To: "x/{filename}", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planPush("test", ad, storeAbs, targetAbs)
+	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
