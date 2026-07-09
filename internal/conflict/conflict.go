@@ -168,6 +168,71 @@ func LineDiff(a, b []byte) []string {
 	return lcsDiff(splitLines(string(a)), splitLines(string(b)))
 }
 
+// Window trims a full LineDiff — lines prefixed "  " (context), "- ", or "+ " —
+// to its changed regions plus contextLines lines of context, replacing each
+// elided run (including leading/trailing file body) with a single "…" marker.
+// It returns the windowed lines, the added/removed line counts, the number of
+// change runs (hunks), and how many kept lines were dropped past the maxLines
+// cap (0 if none). Shared by the CLI --diff view and the control room so both
+// window an edit the same way instead of head-truncating it.
+func Window(lines []string, contextLines, maxLines int) (out []string, added, removed, hunks, overflow int) {
+	isChange := func(s string) bool {
+		return strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-")
+	}
+	n := len(lines)
+	keep := make([]bool, n)
+	inRun := false
+	for i, l := range lines {
+		if isChange(l) {
+			keep[i] = true
+			if strings.HasPrefix(l, "+") {
+				added++
+			} else {
+				removed++
+			}
+			if !inRun {
+				hunks++
+				inRun = true
+			}
+			for d := 1; d <= contextLines; d++ {
+				if i-d >= 0 {
+					keep[i-d] = true
+				}
+				if i+d < n {
+					keep[i+d] = true
+				}
+			}
+		} else {
+			inRun = false
+		}
+	}
+
+	pendingEllipsis := false
+	for i := range n {
+		if !keep[i] {
+			pendingEllipsis = true
+			continue
+		}
+		if len(out) >= maxLines {
+			for j := i; j < n; j++ {
+				if keep[j] {
+					overflow++
+				}
+			}
+			return out, added, removed, hunks, overflow
+		}
+		if pendingEllipsis {
+			out = append(out, "…")
+			pendingEllipsis = false
+		}
+		out = append(out, lines[i])
+	}
+	if pendingEllipsis && len(out) > 0 {
+		out = append(out, "…")
+	}
+	return out, added, removed, hunks, overflow
+}
+
 func splitLines(s string) []string {
 	if s == "" {
 		return nil

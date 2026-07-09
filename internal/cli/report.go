@@ -205,68 +205,11 @@ func plural(n int) string {
 	return "s"
 }
 
-// windowDiff trims a full LineDiff — lines prefixed "  " (context), "- ", or
-// "+ " — to its changed regions plus diffContext lines of context, replacing
-// each elided run (including leading/trailing file body) with a single "…"
-// marker. It returns the windowed lines, the added/removed line counts, the
-// number of change runs (hunks), and how many kept lines were dropped past the
-// maxDiffLines cap (0 if none).
+// windowDiff trims a full LineDiff to its changed regions plus diffContext lines
+// of context, capped at maxDiffLines. It delegates to conflict.Window so the CLI
+// --diff view and the control room window an edit identically.
 func windowDiff(lines []string) (out []string, added, removed, hunks, overflow int) {
-	isChange := func(s string) bool {
-		return strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-")
-	}
-	n := len(lines)
-	keep := make([]bool, n)
-	inRun := false
-	for i, l := range lines {
-		if isChange(l) {
-			keep[i] = true
-			if strings.HasPrefix(l, "+") {
-				added++
-			} else {
-				removed++
-			}
-			if !inRun {
-				hunks++
-				inRun = true
-			}
-			for d := 1; d <= diffContext; d++ {
-				if i-d >= 0 {
-					keep[i-d] = true
-				}
-				if i+d < n {
-					keep[i+d] = true
-				}
-			}
-		} else {
-			inRun = false
-		}
-	}
-
-	pendingEllipsis := false
-	for i := 0; i < n; i++ {
-		if !keep[i] {
-			pendingEllipsis = true
-			continue
-		}
-		if len(out) >= maxDiffLines {
-			for j := i; j < n; j++ {
-				if keep[j] {
-					overflow++
-				}
-			}
-			return out, added, removed, hunks, overflow
-		}
-		if pendingEllipsis {
-			out = append(out, "…")
-			pendingEllipsis = false
-		}
-		out = append(out, lines[i])
-	}
-	if pendingEllipsis && len(out) > 0 {
-		out = append(out, "…")
-	}
-	return out, added, removed, hunks, overflow
+	return conflict.Window(lines, diffContext, maxDiffLines)
 }
 
 func exitCode(changes []engine.Change) int {
