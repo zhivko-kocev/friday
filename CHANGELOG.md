@@ -2,6 +2,16 @@
 
 All notable changes to friday are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Hooks are now wired for you (confirm-first).** Claude Code activates only the hooks declared in `settings.json` — a loose `~/.claude/hooks/hooks.json` is never loaded — so the `claude` preset now merges the store's `hooks/hooks.json` into the `hooks` key of `~/.claude/settings.json` instead of dropping an inert copy you had to wire by hand. The hook scripts run from the store in place.
+  - **New `merge-json` rule strategy.** Deep-merges one source JSON file into a co-owned target at the entry level: objects union their keys, and arrays keep the target's own elements while refreshing friday's. Your other keys (`model`, `permissions`, …), unmanaged hook events, and hooks you added by hand are all preserved. It canonicalizes deterministically (sorted keys, preserved arrays, exact numbers, no HTML-escaping), is idempotent, and is push-only + drift-exempt so unrelated edits never read as drift or conflict. A non-empty but unparseable target is an error — friday writes nothing rather than clobber it.
+  - **Local ownership tracking.** friday records the entries it wrote in a machine-local `hooks-owned.json` (beside the drift store, never synced) so a later push can remove its own now-stale entry after you change a hook in the store. If that cache is cleared it degrades gracefully to exact-content dedup — still idempotent, it just can't drop a since-changed entry until the next clean push.
+  - **Never automatic.** Hook commands run arbitrary shell and a store may be a clone of someone else's repo, so friday shows the exact commands and prompts before writing — `friday push` and `friday setup` on stdin, the control room's sync flow via a confirmation modal. `--no-interactive` (no confirmer) skips wiring; `--force` bypasses the prompt.
+  - **Project scope too.** `friday setup` wires hooks into the repo's `.claude/settings.json`, copying the hook scripts in-repo and referencing them via `${CLAUDE_PROJECT_DIR}` so a teammate who clones the repo gets working hooks.
+- **`friday doctor` reports hooks-wiring state** — whether `settings.json` carries the store's hooks and is current — replacing the old "wire it by hand" hint, and warns when a hook command references an unquoted path (`$HOME`, `${CLAUDE_PROJECT_DIR}`, …) that would break on a path containing a space.
+
 ## [0.5.0] — 2026-07-09
 
 **The control room.** Running bare `friday` on a real terminal now opens a full-screen interactive TUI — pick and drive the everyday commands without remembering flags. It's a new frontend over the same engine and verbs: no new commands, no daemon, nothing running in the background. The moment you pass a flag or subcommand, or pipe/redirect the output, you get the exact one-shot CLI you had before — byte-for-byte, same exit codes.

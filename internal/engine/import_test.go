@@ -43,7 +43,7 @@ func TestPlanImportPopulatesEmptyStore(t *testing.T) {
 		"skills/onboard/SKILL.md": "onboarding",
 		"skills/onboard/tpl/t1":   "template",
 	})
-	changes, err := planImport("test", claudeishAdapter(targetAbs), storeAbs, targetAbs)
+	changes, err := planImport(nil, "test", claudeishAdapter(targetAbs), storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestImportLiteralTemplateMapsToFromPattern(t *testing.T) {
 			{From: rules.FromSpec{"core.md", "core/core.md", "identity.md"}, To: "AGENTS.md", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planImport("test", ad, storeAbs, targetAbs)
+	changes, err := planImport(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestImportLiteralTemplatePrefersExistingVariant(t *testing.T) {
 			{From: rules.FromSpec{"core.md", "core/core.md", "identity.md"}, To: "AGENTS.md", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planImport("test", ad, storeAbs, targetAbs)
+	changes, err := planImport(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestImportNaturalReplaceValueIsNotPhantomEdit(t *testing.T) {
 	populateTarget(t, targetAbs, map[string]string{
 		"agents/architect.md": "plans; see ~/.friday/core/core.md",
 	})
-	changes, err := planImport("test", claudeishAdapter(targetAbs), storeAbs, targetAbs)
+	changes, err := planImport(nil, "test", claudeishAdapter(targetAbs), storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestImportSkipsFilesNoFromPatternAccepts(t *testing.T) {
 			{From: rules.FromSpec{"agents/*.md"}, To: "agents/{filename}", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planImport("test", ad, storeAbs, targetAbs)
+	changes, err := planImport(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestImportInvertsPerFromPattern(t *testing.T) {
 			{From: rules.FromSpec{"commands/*.md", "extras/*.md"}, To: "bits/{filename}", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planImport("test", ad, storeAbs, targetAbs)
+	changes, err := planImport(nil, "test", ad, storeAbs, targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}

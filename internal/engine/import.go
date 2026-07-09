@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/zhivko-kocev/friday/internal/config"
+	"github.com/zhivko-kocev/friday/internal/drift"
 	"github.com/zhivko-kocev/friday/internal/rules"
 )
 
@@ -22,7 +23,7 @@ func Import(cfg *config.Config, opts Options) ([]Change, error) {
 // planImport reverses one adapter: target files → store files. Concatenate
 // and frontmatter-stripped rules are lossy in reverse and reported as
 // unsupported; replace rules invert cleanly.
-func planImport(adapterName string, ad *config.Adapter, storeAbs, targetAbs string) ([]Change, error) {
+func planImport(_ *drift.Owned, adapterName string, ad *config.Adapter, storeAbs, targetAbs string) ([]Change, error) {
 	var out []Change
 	skip := func(ri int, to, reason string) {
 		out = append(out, Change{
@@ -36,6 +37,10 @@ func planImport(adapterName string, ad *config.Adapter, storeAbs, targetAbs stri
 	}
 
 	for ri, r := range ad.Rules {
+		if r.Strategy == rules.StrategyMergeJSON {
+			skip(ri, r.To, "merge-json rule cannot be imported (the target co-owns keys friday does not manage)")
+			continue
+		}
 		if r.Strategy == rules.StrategyConcatenate {
 			skip(ri, r.To, "concatenate rule cannot be imported (multi-source → single target is irreversible)")
 			continue

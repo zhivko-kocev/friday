@@ -54,7 +54,7 @@ func TestPresetsEntryFilesAndReplace(t *testing.T) {
 // which store patterns its rules consume.
 func TestPresetCapabilityMatrix(t *testing.T) {
 	want := map[string][]string{
-		"claude":      {"rules/*.md", "agents/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md", "hooks/**/*"},
+		"claude":      {"rules/*.md", "agents/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md", "hooks/hooks.json"},
 		"codex":       {"rules/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
 		"copilot":     {"rules/*.md", "agents/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
 		"opencode":    {"rules/*.md", "agents/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
@@ -103,12 +103,17 @@ func TestAllAdaptersHasEveryPreset(t *testing.T) {
 
 func TestGetStampsDefaultReplaceOnEveryRule(t *testing.T) {
 	// The registry stays pure layout data; the store-wide marker rewrite is
-	// stamped by Get so a newly added rule can't silently ship without it.
+	// stamped by Get so a newly added rule can't silently ship without one.
+	// Most rules get the default "~/.friday"; hook-wiring rules override it with
+	// a shell-expandable form ("$HOME/.friday" at user scope,
+	// "${CLAUDE_PROJECT_DIR}/.claude" at project scope). The invariant under
+	// test is only that the marker is always rewritten to something non-empty —
+	// never left dangling as ${CLAUDE_PLUGIN_ROOT} in a pushed file.
 	for _, name := range Names() {
 		p, _ := Get(name)
 		for i, r := range append(p.Rules, p.ProjectRules...) {
-			if r.Replace["${CLAUDE_PLUGIN_ROOT}"] != "~/.friday" {
-				t.Errorf("%s: rule %d (%s) missing the stamped default replace", name, i, r.To)
+			if r.Replace["${CLAUDE_PLUGIN_ROOT}"] == "" {
+				t.Errorf("%s: rule %d (%s) has no plugin-root replace", name, i, r.To)
 			}
 		}
 	}

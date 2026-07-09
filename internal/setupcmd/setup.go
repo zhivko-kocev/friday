@@ -152,6 +152,16 @@ func ruleCovers(r *rules.Rule, it Item) bool {
 		if slices.Contains(it.Patterns, pat) || rules.Match(pat, it.Probe) {
 			return true
 		}
+		// An item that selects a whole tree (e.g. hooks with "hooks/**/*")
+		// covers every rule whose from-pattern falls under it — not just the one
+		// that happens to match the single probe file. Without this, a rule like
+		// "hooks/hooks.json" is dropped whenever another file under hooks/ sorts
+		// ahead of it and becomes the probe.
+		for _, ip := range it.Patterns {
+			if rules.Match(ip, pat) {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -160,7 +170,7 @@ func ruleCovers(r *rules.Rule, it Item) bool {
 // project at cwd. The prompt reader is injected so tests can script it;
 // production passes os.Stdin. The conflict resolver comes from the caller so
 // this package stays free of prompt duplication.
-func Run(prompt io.Reader, cwd string, opts Options, onConflict engine.ConflictResolver) ([]engine.Change, error) {
+func Run(prompt io.Reader, cwd string, opts Options, onConflict engine.ConflictResolver, confirmWrite engine.ConfirmWriter) ([]engine.Change, error) {
 	storeDir, err := config.UserStoreDir()
 	if err != nil {
 		return nil, err
@@ -210,7 +220,7 @@ func Run(prompt io.Reader, cwd string, opts Options, onConflict engine.ConflictR
 	if err != nil {
 		return nil, err
 	}
-	return engine.Push(cfg, engine.Options{DryRun: opts.DryRun, Force: opts.Force, OnConflict: onConflict, Only: only})
+	return engine.Push(cfg, engine.Options{DryRun: opts.DryRun, Force: opts.Force, OnConflict: onConflict, ConfirmWrite: confirmWrite, Only: only})
 }
 
 // Resolve narrows the preset to the selected items and builds the project-scoped

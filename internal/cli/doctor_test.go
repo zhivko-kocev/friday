@@ -39,6 +39,26 @@ func TestDoctorOKWhenStoreExists(t *testing.T) {
 	}
 }
 
+func TestUnquotedExpansion(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want bool
+	}{
+		{`bash $HOME/.friday/hooks/scripts/git-guard.sh`, true},
+		{`bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/git-guard.sh`, true},
+		{`bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/x.sh`, true},
+		{`bash ~/.friday/hooks/x.sh`, true},
+		{`bash "$HOME/.friday/hooks/scripts/git-guard.sh"`, false}, // quoted → safe
+		{`bash "${CLAUDE_PLUGIN_ROOT}/hooks/x.sh"`, false},
+		{`echo no path variables here`, false},
+	}
+	for _, c := range cases {
+		if got := unquotedExpansion(c.cmd); got != c.want {
+			t.Errorf("unquotedExpansion(%q) = %v, want %v", c.cmd, got, c.want)
+		}
+	}
+}
+
 // Entry-file variants are informational — legacy identity.md and even
 // multiple variants must not fail the health check.
 func TestDoctorEntryFileVariants(t *testing.T) {

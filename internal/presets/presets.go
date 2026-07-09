@@ -77,12 +77,17 @@ var storeReplace = map[string]string{pluginRootMarker: "~/.friday"}
 //	skills/      skills/    skills/   skills/            skills/    —                  —                           skills/
 //	standards/   ✓          ✓         ✓                  ✓          ✓                  ✓                           ✓
 //	connectors/  ✓          ✓         ✓                  ✓          ✓                  ✓                           ✓
-//	hooks/       hooks/     —         —                  —          —                  —                           —
+//	hooks/       settings.json —      —                  —          —                  —                           —
 //
 // standards/ and connectors/ have no native discovery mechanism anywhere, so
 // they land as reference copies in each agent's config home; the live copies
 // referenced by skill bodies stay in ~/.friday. "—" means the harness has no
 // documented surface for that content.
+//
+// hooks/ is the exception to the reference-copy rule: Claude Code activates only
+// the hooks declared in settings.json, so the claude preset merges the store's
+// hooks.json into that file's `hooks` key (merge-json strategy) instead of
+// dropping an inert copy the user must wire up by hand.
 
 var registry = map[string]Preset{
 	"claude": {
@@ -99,9 +104,19 @@ var registry = map[string]Preset{
 			{From: rules.FromSpec{"skills/**/*"}, To: "skills/{relpath}"},
 			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
 			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
-			// Reference copy: Claude Code only auto-loads plugin hooks; wire
-			// entries into ~/.claude/settings.json by hand (doctor explains).
-			{From: rules.FromSpec{"hooks/**/*"}, To: "hooks/{relpath}"},
+			// Claude Code only activates hooks declared in settings.json — a
+			// loose ~/.claude/hooks/hooks.json is never loaded — so merge the
+			// store's hooks.json into settings.json's `hooks` key. The scripts
+			// run from the store in place; the command paths rewrite the plugin
+			// marker to $HOME/.friday (not ~/.friday: a hook command runs in a
+			// shell that expands $HOME but need not expand ~). merge-json is
+			// push-only and drift-exempt so the user's other settings survive.
+			{
+				From:     rules.FromSpec{"hooks/hooks.json"},
+				To:       "settings.json",
+				Strategy: rules.StrategyMergeJSON,
+				Replace:  map[string]string{pluginRootMarker: "$HOME/.friday"},
+			},
 		},
 		// Claude Code reads ./CLAUDE.md at the repo root and discovers
 		// agents/commands/skills under ./.claude/.
@@ -118,7 +133,20 @@ var registry = map[string]Preset{
 			{From: rules.FromSpec{"skills/**/*"}, To: ".claude/skills/{relpath}"},
 			{From: rules.FromSpec{"standards/*.md"}, To: ".claude/standards/{filename}"},
 			{From: rules.FromSpec{"connectors/*.md"}, To: ".claude/connectors/{filename}"},
+			// Project scope keeps the hooks tree in-repo (a teammate cloning it
+			// has no ~/.friday), so copy it into .claude/hooks/ and wire
+			// settings.json to run the scripts via ${CLAUDE_PROJECT_DIR} — the
+			// project path variable Claude Code provides to hooks. The copied
+			// hooks.json is inert (Claude Code loads settings.json, not it); the
+			// merge-json rule is confirm-first, so a committed shared settings.json
+			// is never written unattended.
 			{From: rules.FromSpec{"hooks/**/*"}, To: ".claude/hooks/{relpath}"},
+			{
+				From:     rules.FromSpec{"hooks/hooks.json"},
+				To:       ".claude/settings.json",
+				Strategy: rules.StrategyMergeJSON,
+				Replace:  map[string]string{pluginRootMarker: "${CLAUDE_PROJECT_DIR}/.claude"},
+			},
 		},
 	},
 	// Cursor user-level rules live inside Cursor's settings UI, not on the

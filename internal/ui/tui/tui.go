@@ -47,6 +47,7 @@ const (
 	screenShareConfirm
 	screenRunning
 	screenConflict
+	screenConfirm
 	screenChanges
 	screenError
 	screenHelp
@@ -124,6 +125,7 @@ type model struct {
 	// modal is up; aborting guards a single close of the bridge's abort channel.
 	activeBridge *bridge
 	conflict     *conflictState
+	confirm      *confirmState // set only while the hook-wiring confirm modal is up
 	aborting     bool
 
 	result     []engine.Change
@@ -278,6 +280,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = screenConflict
 		return m, nil
 
+	case needConfirmMsg:
+		// Same fast-skip as a conflict: if the apply is over or being cancelled,
+		// answer no (skip the wiring) without popping the modal.
+		if m.aborting || m.activeBridge == nil {
+			select {
+			case msg.reply <- false:
+			default:
+			}
+			return m, nil
+		}
+		cs := &confirmState{info: msg.info, reply: msg.reply}
+		cs.body = renderConfirm(cs.info, m.styles)
+		m.confirm = cs
+		m.screen = screenConfirm
+		return m, nil
+
 	case engineDoneMsg:
 		m.result, m.opErr, m.notice = msg.changes, msg.err, ""
 		m.warnings = msg.warnings
@@ -291,6 +309,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.aborting = false
 		m.activeBridge = nil // the apply (if any) has finished; ctrl+c quits again
 		m.conflict = nil
+		m.confirm = nil
 		// A dry-run preview keeps pending set (enter will apply it); a completed
 		// apply (or any status/errored run) clears it, making the changes screen
 		// terminal.
@@ -395,7 +414,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.String() == "?" && m.screen != screenColdStart && m.screen != screenShareInput &&
-		m.screen != screenRunning && m.screen != screenConflict {
+		m.screen != screenRunning && m.screen != screenConflict && m.screen != screenConfirm {
 		m.helpReturn = m.screen
 		m.screen = screenHelp
 		return m, nil
@@ -492,6 +511,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.resolve(engine.ConflictTakeTarget)
 		case "s", "esc":
 			return m.resolve(engine.ConflictSkip)
+		}
+		return m, nil
+
+	case screenConfirm:
+		if m.confirm == nil {
+			return m, nil
+		}
+		switch msg.String() {
+		case "y":
+			return m.answer(true)
+		case "n", "esc":
+			return m.answer(false)
 		}
 		return m, nil
 
@@ -696,6 +727,16 @@ func (m model) resolve(choice engine.ConflictChoice) (tea.Model, tea.Cmd) {
 	return m, m.sp.Tick
 }
 
+// answer replies to the current hook-wiring prompt and returns to the running
+// screen while the engine continues. The reply channel is buffered, so the send
+// never blocks Update.
+func (m model) answer(ok bool) (tea.Model, tea.Cmd) {
+	m.confirm.reply <- ok
+	m.confirm = nil
+	m.screen = screenRunning
+	return m, m.sp.Tick
+}
+
 // abortApply cancels an in-flight apply: closing the bridge's abort channel
 // unblocks a waiting resolver and makes every later conflict fast-skip, so the
 // engine still unwinds to store.Save() and the drift store stays consistent.
@@ -708,6 +749,7 @@ func (m model) abortApply() (tea.Model, tea.Cmd) {
 		close(m.activeBridge.abort)
 	}
 	m.conflict = nil
+	m.confirm = nil
 	m.screen = screenRunning
 	return m, m.sp.Tick
 }
@@ -872,6 +914,7 @@ func applyOpts(opts engine.Options, br *bridge, warnings *[]string) engine.Optio
 	opts.Warnf = warnInto(warnings)
 	if br != nil {
 		opts.OnConflict = br.resolver()
+		opts.ConfirmWrite = br.confirmer() // prompt before wiring hooks into settings.json
 		opts.BaseLookup = br.base
 		opts.Abort = br.abort // Ctrl-C halts the apply loop, not just conflicts
 	}
@@ -1111,6 +1154,14 @@ func (m model) View() string {
 		return "\n" + m.conflict.body + "\n" +
 			m.footer("k keep · t take · s skip · ctrl+c cancel")
 
+	case screenConfirm:
+		if m.confirm == nil {
+			return ""
+		}
+		// Body is rendered once when the request arrives (see needConfirmMsg).
+		return "\n" + m.confirm.body + "\n" +
+			m.footer("y install · n skip · ctrl+c cancel")
+
 	case screenHelp:
 		return "\n" + helpView(m.styles) + "\n" + m.footer("any key to close")
 
@@ -1162,6 +1213,7 @@ func helpView(st styles) string {
 		{"a", "toggle all checklist items"},
 		{"d", "toggle diffs on the changes screen"},
 		{"k / t / s", "conflict: keep canonical / take target / skip"},
+		{"y / n", "hook wiring: install / skip"},
 		{"esc", "back (quit on the first-run screen)"},
 		{"q", "quit (on home and result screens)"},
 		{"ctrl+c", "cancel an apply, or quit"},

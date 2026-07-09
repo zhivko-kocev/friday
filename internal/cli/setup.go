@@ -43,15 +43,17 @@ func cmdSetup(args []string) int {
 	}
 
 	var resolver engine.ConflictResolver
+	var confirm engine.ConfirmWriter
 	if !o.noInteractive {
 		resolver = interactiveResolver()
+		confirm = hookWriteConfirmer()
 	}
 	changes, err := setupcmd.Run(os.Stdin, cwd, setupcmd.Options{
 		Agent:       o.agent,
 		DryRun:      o.dryRun,
 		Force:       o.force,
 		Interactive: !o.noInteractive,
-	}, resolver)
+	}, resolver, confirm)
 	if err != nil {
 		output.Err("%v", err)
 		return 1

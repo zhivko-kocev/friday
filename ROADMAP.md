@@ -46,7 +46,7 @@ item landed in (v0.1.0–v0.2.1).
 
 - [ ] **More presets** as agents grow documented filesystem config paths (Cursor, Continue, Aider, Zed — see presets.go for why each is currently absent).
 - [ ] **Merge editor integration** — `$EDITOR` on dirty merges as an alternative to conflict markers. This is also the control room's path to a merge option: its conflict modal ships with keep / take / skip, and `$EDITOR`-on-a-temp-file (via bubbletea's process suspend) is how it will gain merge without nesting a second prompt program.
-- [ ] **Opt-in hooks wiring** — a confirm-first command that merges a store's `hooks/hooks.json` entries into `~/.claude/settings.json` after showing the exact commands. Never automatic: hooks execute arbitrary shell, and friday's job is syncing cloned repos — auto-registering their commands would be a supply-chain hazard.
+- [x] **Confirm-first hooks wiring** — the `claude` preset merges a store's `hooks/hooks.json` into the `hooks` key of `~/.claude/settings.json` via the push-only, drift-exempt `merge-json` strategy; the scripts run from the store in place. `friday push` shows the exact commands and prompts before writing — a nil confirmer (`--no-interactive`) or a declined prompt skips it, and only `--force` bypasses the prompt. Never automatic: hooks execute arbitrary shell and friday's job is syncing cloned repos, so their commands are never registered unattended. Every write surface confirms first — `friday push` on stdin, the control room via a modal. `friday setup` wires project-scope hooks into the repo's `.claude/settings.json` too, using `${CLAUDE_PROJECT_DIR}` so the in-repo scripts resolve for anyone who clones it.
 
 ## Later — orchestration (one-shot)
 

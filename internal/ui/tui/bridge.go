@@ -84,11 +84,59 @@ func (b *bridge) resolver() engine.ConflictResolver {
 	}
 }
 
+// confirmer bridges engine's write-confirmation contract to the control room's
+// modal, mirroring resolver(). The engine calls it on its apply goroutine for
+// each drift-exempt (merge-json) write; the request is shipped to the event loop
+// and the goroutine blocks on the modal's yes/no reply. The safe default is
+// false — a cancel, an unwired loop, or a declined prompt all skip the write, so
+// friday never installs hook commands unattended.
+func (b *bridge) confirmer() engine.ConfirmWriter {
+	return func(info engine.WriteConfirmInfo) bool {
+		select {
+		case <-b.abort:
+			return false
+		default:
+		}
+		reply := make(chan bool, 1)
+		if !b.send.send(needConfirmMsg{info: info, reply: reply}) {
+			return false
+		}
+		select {
+		case ok := <-reply:
+			// Prefer a concurrent cancel over a buffered approval, like resolver().
+			select {
+			case <-b.abort:
+				return false
+			default:
+			}
+			return ok
+		case <-b.abort:
+			return false
+		}
+	}
+}
+
 // needConflictMsg ships one conflict to the event loop; the modal sends the
 // user's choice back down reply (buffered, so Update never blocks).
 type needConflictMsg struct {
 	info  engine.ConflictInfo
 	reply chan engine.Resolution
+}
+
+// needConfirmMsg ships one drift-exempt write to the event loop; the modal
+// sends the user's yes/no back down reply (buffered, so Update never blocks).
+type needConfirmMsg struct {
+	info  engine.WriteConfirmInfo
+	reply chan bool
+}
+
+// confirmState is the modal's live confirmation plus the channel to answer on.
+// body is rendered once when the request arrives so View doesn't rebuild it on
+// every keystroke.
+type confirmState struct {
+	info  engine.WriteConfirmInfo
+	reply chan bool
+	body  string
 }
 
 // conflictState is the modal's live conflict plus the channel to answer on.

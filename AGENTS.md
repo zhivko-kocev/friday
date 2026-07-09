@@ -42,7 +42,7 @@ standards/*.md        per-language baselines (not copied — reached via ~/.frid
 agents/*.md           agent definitions (claude only)
 commands/*.md         slash-commands (claude only)
 skills/<name>/*       skills (recursively mirrored)
-hooks/**/*            hook config + scripts (not copied — wire into settings.json by hand)
+hooks/hooks.json      merged into ~/.claude/settings.json's `hooks` key (merge-json, confirm-first); scripts under hooks/ run from the store in place
 friday.yaml           adapter manifest — auto-seeded with all built-in presets (seven) at init
 .gitignore            scaffolded with secret + runtime-state patterns
 ```
@@ -69,7 +69,7 @@ internal/config/      parses friday.yaml; LoadUser / NewDefault
 internal/rules/       Rule type, FromSpec (string|[]string), glob expansion, token engine
 internal/engine/      plans + applies push/pull; resolves drift via the conflict UI; atomic writes
 internal/conflict/    interactive [k/t/d/s] prompt with line-LCS diff (LineDiff is reused by report)
-internal/drift/       SHA256 store at $UserCacheDir/friday/state.json — flags external edits
+internal/drift/       SHA256 store at $UserCacheDir/friday/state.json — flags external edits; owned.go tracks merge-json's own hook entries (hooks-owned.json)
 internal/frontmatter/ parse/strip YAML frontmatter in .md files (CRLF-tolerant)
 internal/git/         shells out to `git` for clone/pull/push/status
 internal/presets/     built-in adapter rule sets (claude/codex/copilot/opencode/windsurf/antigravity/pi)
@@ -115,6 +115,20 @@ drift store at `$UserCacheDir/friday/state.json` is keyed by
 `AGENTS.md`, `copilot-instructions.md`) are not pullable. Same for rules
 with `frontmatter_strip` — pulling would re-introduce stripped fields.
 
+**merge-json is push-only, drift-exempt, and confirm-first.** It deep-merges one
+source JSON file into a co-owned target JSON file at the entry level (the `claude`
+preset wires `hooks/hooks.json` into `settings.json`). Objects union their keys
+and arrays keep the target's own elements while refreshing friday's — so your
+`model`, unmanaged hook events, and hooks you added by hand all survive. friday
+records the entries it wrote in a machine-local owned-state file (`hooks-owned.json`,
+a sibling of the drift store) so a later push can drop its own now-stale entry
+after a store edit; with that cache gone it degrades to exact-content dedup (still
+idempotent, just can't remove a since-changed entry). It needs no whole-file drift
+baseline and never conflicts. Because hook commands run arbitrary shell and a
+store may be a clone, `friday push` and `friday setup` show the exact commands and
+prompt before writing (the control room via a modal); `--no-interactive` (no
+confirmer) skips it and `--force` bypasses the prompt. Not pullable.
+
 ## friday.yaml schema
 
 ```yaml
@@ -125,7 +139,7 @@ adapters:
     rules:
       - from: <pattern> | [<pattern>, ...]
         to: <template>
-        strategy: copy | concatenate       # default: copy
+        strategy: copy | concatenate | merge-json  # default: copy
         separator: <string>                # concatenate-only; default "\n\n---\n\n"
         frontmatter_strip: [<key>, ...]    # strip listed YAML frontmatter keys
         replace: {<literal>: <literal>}    # rewrite on push, inverted on pull
@@ -199,7 +213,10 @@ non-empty `~/.friday` — remove it yourself to re-init.
 
 ## Limitations
 
-- Concatenate rules and `frontmatter_strip` rules are not reversible (no pull).
+- Concatenate, `frontmatter_strip`, and `merge-json` rules are not reversible (no pull).
+- `merge-json` hook wiring is confirmed before every write — `friday push` and
+  `friday setup` prompt on stdin, the control room via a modal. A nil confirmer
+  (`--no-interactive`) skips wiring; `--force` bypasses the prompt.
 - A plain `pull` only walks files the store already knows about. A file created
   directly in a target dir is caught by `friday pull --discover`, which walks the
   whole agent dir and captures new files into the store.
