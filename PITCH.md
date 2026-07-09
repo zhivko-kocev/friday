@@ -44,8 +44,8 @@ That's it. No proprietary format. No hosted service. No daemon.
   conflicts in a diff modal, apply. Scripts and CI keep the exact one-shot,
   plain-text CLI, byte-for-byte; the UI is a frontend, not new commands.
 - **One canonical store**, version-controlled in a git repo of your choice.
-- **Seven built-in presets** — Claude Code, Codex, OpenCode, GitHub Copilot,
-  Windsurf, Antigravity, and pi. Add another in ~30 lines of Go.
+- **Six built-in presets** — Claude Code, Codex, OpenCode, GitHub Copilot,
+  Antigravity, and pi. Add another in ~30 lines of Go.
 - **Plain Markdown content.** Your config repo is just `core.md`, `rules/*.md`,
   `skills/foo/*`. No yaml manifest required — friday seeds one on init with
   every built-in preset, but you can hand-edit or delete entries freely.

@@ -19,6 +19,14 @@ const (
 	// into ~/.claude/settings.json). It is push-only and exempt from the
 	// whole-file drift model — see engine.planMergeJSON.
 	StrategyMergeJSON = "merge-json"
+	// StrategyMDToTOML and StrategyMDToJSON render a markdown source (YAML
+	// frontmatter + body) into a structured config file: name/description come
+	// from the frontmatter, the body becomes the instructions field. They wire
+	// Claude-shaped agents/*.md into Codex's TOML subagents and Antigravity's
+	// JSON agent.json. Like concatenate, they are push-only (the frontmatter
+	// keys they drop make them lossy in reverse) — see engine.planMDStruct.
+	StrategyMDToTOML = "md-to-toml"
+	StrategyMDToJSON = "md-to-json"
 
 	DefaultSeparator = "\n\n---\n\n"
 )
@@ -31,10 +39,11 @@ type Rule struct {
 	Separator        string            `yaml:"separator,omitempty"`
 	FrontmatterStrip []string          `yaml:"frontmatter_strip,omitempty"`
 	Replace          map[string]string `yaml:"replace,omitempty"`
-	// MaxBytes flags outputs larger than the agent can consume (e.g.
-	// Windsurf caps global_rules.md at 6000 chars). Friday still writes the
-	// file — the agent's truncation behavior is its own — but every push
-	// and status report carries the warning. 0 = no limit.
+	// MaxBytes flags outputs larger than the agent can consume (e.g. an agent
+	// that caps a concatenated global-rules file at N chars). No built-in
+	// preset sets it today, but it stays for hand-written friday.yaml rules:
+	// friday still writes the file — the agent's truncation behavior is its
+	// own — but every push and status report carries the warning. 0 = no limit.
 	MaxBytes int `yaml:"max_bytes,omitempty"`
 }
 
@@ -77,9 +86,23 @@ func (r *Rule) Normalize() error {
 		r.Strategy = StrategyCopy
 	}
 	switch r.Strategy {
-	case StrategyCopy, StrategyConcatenate, StrategyMergeJSON:
+	case StrategyCopy, StrategyConcatenate, StrategyMergeJSON, StrategyMDToTOML, StrategyMDToJSON:
 	default:
-		return fmt.Errorf("unknown strategy %q (must be copy, concatenate or merge-json)", r.Strategy)
+		return fmt.Errorf("unknown strategy %q (must be copy, concatenate, merge-json, md-to-toml or md-to-json)", r.Strategy)
+	}
+	// md-to-toml/md-to-json render markdown into a structured file; the
+	// text-oriented options are meaningless (frontmatter is parsed, not
+	// stripped; there is no concatenation and no size cap on a subagent file).
+	if r.Strategy == StrategyMDToTOML || r.Strategy == StrategyMDToJSON {
+		if len(r.FrontmatterStrip) > 0 {
+			return fmt.Errorf("%s does not support frontmatter_strip", r.Strategy)
+		}
+		if r.Separator != "" {
+			return fmt.Errorf("%s does not support separator", r.Strategy)
+		}
+		if r.MaxBytes != 0 {
+			return fmt.Errorf("%s does not support max_bytes", r.Strategy)
+		}
 	}
 	if len(r.From) == 0 {
 		return fmt.Errorf("rule.from is required")

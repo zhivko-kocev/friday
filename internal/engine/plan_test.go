@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +58,85 @@ func TestPlanPushCopy(t *testing.T) {
 		if ch.Action != ActionCreate {
 			t.Errorf("change %s action = %s, want create", ch.DestRel, ch.Action)
 		}
+	}
+}
+
+func TestPlanPushMDStruct(t *testing.T) {
+	storeAbs, targetAbs := scaffold(t, map[string]string{
+		"agents/architect.md": "---\nname: architect\ndescription: plans work\ntools: Read\n---\nBody line one.\nBody \"two\".\n",
+	})
+	ad := &config.Adapter{
+		Target: targetAbs,
+		Rules: []*rules.Rule{
+			{From: rules.FromSpec{"agents/*.md"}, To: "agents/{stem}.toml", Strategy: rules.StrategyMDToTOML},
+			{From: rules.FromSpec{"agents/*.md"}, To: "sub/{stem}/agent.json", Strategy: rules.StrategyMDToJSON},
+		},
+	}
+	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 2 {
+		t.Fatalf("got %d changes, want 2 — %+v", len(changes), changes)
+	}
+	byDest := map[string]Change{}
+	for _, ch := range changes {
+		byDest[ch.DestRel] = ch
+	}
+
+	toml, ok := byDest["agents/architect.toml"]
+	if !ok || toml.Action != ActionCreate {
+		t.Fatalf("md-to-toml change missing or not create: %+v", changes)
+	}
+	if !strings.Contains(string(toml.NewContent), `name = "architect"`) ||
+		!strings.Contains(string(toml.NewContent), `developer_instructions = """`) ||
+		!strings.Contains(string(toml.NewContent), `Body \"two\".`) {
+		t.Errorf("unexpected TOML render:\n%s", toml.NewContent)
+	}
+
+	js, ok := byDest["sub/architect/agent.json"]
+	if !ok || js.Action != ActionCreate {
+		t.Fatalf("md-to-json change missing or not create: %+v", changes)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(js.NewContent, &m); err != nil {
+		t.Fatalf("emitted invalid JSON: %v\n%s", err, js.NewContent)
+	}
+	if m["name"] != "architect" || m["description"] != "plans work" || m["prompt"] == nil {
+		t.Errorf("unexpected JSON fields: %v", m)
+	}
+}
+
+// TestPlanImportRefusesMDStruct locks the push-only gate: without it, importing
+// a literal-target md-to-toml rule would read the generated .toml straight back
+// over the store markdown — silent store corruption on a supported config.
+func TestPlanImportRefusesMDStruct(t *testing.T) {
+	storeAbs, targetAbs := scaffold(t, map[string]string{
+		"agents/architect.md": "---\nname: architect\n---\noriginal store body",
+	})
+	if err := os.MkdirAll(filepath.Join(targetAbs, "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetAbs, "agents", "architect.toml"), []byte("name = \"architect\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ad := &config.Adapter{
+		Target: targetAbs,
+		Rules: []*rules.Rule{
+			{From: rules.FromSpec{"agents/architect.md"}, To: "agents/architect.toml", Strategy: rules.StrategyMDToTOML},
+		},
+	}
+	changes, err := planImport(nil, "test", ad, storeAbs, targetAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Action != ActionUnsupported {
+		t.Fatalf("md-to-toml import must be reported unsupported (push-only), got %+v", changes)
+	}
+	// The store markdown must be untouched by planning (it never writes, but be
+	// explicit that the corruption path is closed).
+	if got, _ := os.ReadFile(filepath.Join(storeAbs, "agents", "architect.md")); !strings.Contains(string(got), "original store body") {
+		t.Errorf("store markdown was altered: %s", got)
 	}
 }
 

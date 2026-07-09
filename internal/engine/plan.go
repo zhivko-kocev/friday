@@ -39,6 +39,12 @@ func planPush(owned *drift.Owned, adapterName string, ad *config.Adapter, storeA
 				return nil, err
 			}
 			chs = []Change{ch}
+		case rules.StrategyMDToTOML, rules.StrategyMDToJSON:
+			var err error
+			chs, err = planMDStruct(adapterName, r, storeAbs, targetAbs, r.Strategy)
+			if err != nil {
+				return nil, err
+			}
 		default:
 			return nil, fmt.Errorf("adapter %s: unknown strategy %q", adapterName, r.Strategy)
 		}
@@ -108,6 +114,41 @@ func planConcatenate(adapterName string, r *rules.Rule, storeAbs, targetAbs stri
 }
 
 func planCopy(adapterName string, r *rules.Rule, storeAbs, targetAbs string) ([]Change, error) {
+	return planTokenized(adapterName, r, storeAbs, targetAbs, func(raw []byte, _ string) ([]byte, error) {
+		return r.ApplyReplace([]byte(frontmatter.Strip(string(raw), r.FrontmatterStrip))), nil
+	})
+}
+
+// planMDStruct renders each matched agent markdown file into a structured
+// config file (Codex TOML / Antigravity JSON). Push-only: the frontmatter keys
+// the transform drops make it lossy in reverse, so planPull skips it.
+func planMDStruct(adapterName string, r *rules.Rule, storeAbs, targetAbs, format string) ([]Change, error) {
+	return planTokenized(adapterName, r, storeAbs, targetAbs, func(raw []byte, srcRel string) ([]byte, error) {
+		rec := parseAgentMD(raw, stemOf(srcRel), r.ApplyReplace)
+		if format == rules.StrategyMDToTOML {
+			return mdToTOML(rec), nil
+		}
+		return mdToJSON(rec)
+	})
+}
+
+// stemOf returns a path's base filename without its extension.
+func stemOf(rel string) string {
+	base := rel
+	if i := strings.LastIndexAny(base, `/\`); i >= 0 {
+		base = base[i+1:]
+	}
+	if i := strings.LastIndex(base, "."); i > 0 {
+		base = base[:i]
+	}
+	return base
+}
+
+// planTokenized is the shared push skeleton for the per-file strategies (copy
+// and the md-to-* transforms): it expands the from-patterns, renders each match
+// with `render`, and diffs the result against the destination. render maps a
+// source file's bytes (and its store-relative path) to the bytes to write.
+func planTokenized(adapterName string, r *rules.Rule, storeAbs, targetAbs string, render func(raw []byte, srcRel string) ([]byte, error)) ([]Change, error) {
 	var out []Change
 	// Tokenized templates make the from-patterns independent content globs —
 	// each one failing to match is worth reporting. A literal template's
@@ -117,7 +158,7 @@ func planCopy(adapterName string, r *rules.Rule, storeAbs, targetAbs string) ([]
 	matchedAny := false
 	// A literal template (or colliding filenames) can map several sources to
 	// one destination; the from-list is ordered most-preferred first, so the
-	// first source wins. `friday doctor` reports the collision.
+	// first source wins.
 	seenDest := map[string]bool{}
 	for _, pat := range r.From {
 		matches, err := rules.Expand(storeAbs, pat)
@@ -148,7 +189,10 @@ func planCopy(adapterName string, r *rules.Rule, storeAbs, targetAbs string) ([]
 			if err != nil {
 				return nil, fmt.Errorf("read %s: %w", m, err)
 			}
-			content := r.ApplyReplace([]byte(frontmatter.Strip(string(raw), r.FrontmatterStrip)))
+			content, err := render(raw, m)
+			if err != nil {
+				return nil, fmt.Errorf("render %s: %w", m, err)
+			}
 			tokens := rules.TokensFor(m, anchor)
 			destRel := tokens.Expand(r.To)
 			destAbs := filepath.Join(targetAbs, destRel)
@@ -315,6 +359,17 @@ func planPull(_ *drift.Owned, adapterName string, ad *config.Adapter, storeAbs, 
 				DestRel:   r.To,
 				Action:    ActionUnsupported,
 				Reason:    "concatenate rule cannot be pulled (multi-source → single target is irreversible)",
+			})
+			continue
+		}
+		if r.Strategy == rules.StrategyMDToTOML || r.Strategy == rules.StrategyMDToJSON {
+			out = append(out, Change{
+				Adapter:   adapterName,
+				Direction: DirPull,
+				RuleIndex: ri,
+				DestRel:   r.To,
+				Action:    ActionUnsupported,
+				Reason:    "md-to-toml/md-to-json rule cannot be pulled (markdown→structured-config drops frontmatter, irreversible)",
 			})
 			continue
 		}

@@ -66,27 +66,33 @@ const pluginRootMarker = "${CLAUDE_PLUGIN_ROOT}"
 // data and a new rule can't forget it.
 var storeReplace = map[string]string{pluginRootMarker: "~/.friday"}
 
-// The presets map every store directory into every agent that has a
-// documented place for it (paths verified against each harness's docs,
-// July 2026):
+// The presets map every store directory into the place each agent documents
+// for it (paths verified against each harness's docs, July 2026):
 //
-//	store        claude     codex     copilot            opencode   windsurf           antigravity                 pi
-//	core+rules   CLAUDE.md  AGENTS.md copilot-instr..md  AGENTS.md  memories/global..  GEMINI.md                   AGENTS.md
-//	agents/      agents/    —         agents/*.agent.md  agents/    —                  —                           —
-//	commands/    commands/  prompts/  —                  commands/  global_workflows/  antigravity/global_workfl.  prompts/
-//	skills/      skills/    skills/   skills/            skills/    —                  —                           skills/
-//	standards/   ✓          ✓         ✓                  ✓          ✓                  ✓                           ✓
-//	connectors/  ✓          ✓         ✓                  ✓          ✓                  ✓                           ✓
-//	hooks/       settings.json —      —                  —          —                  —                           —
+//	store        claude        codex     copilot            opencode   antigravity                 pi
+//	core+rules   CLAUDE.md     AGENTS.md copilot-instr..md  AGENTS.md  GEMINI.md                   AGENTS.md
+//	agents/      agents/       *.toml    agents/*.agent.md  agents/    agent.json                  —
+//	commands/    commands/     prompts/  —                  commands/  antigravity/global_workfl.  prompts/
+//	skills/      skills/       skills/   skills/            skills/    config/skills/              skills/
+//	standards/   ✓             ✓         ✓                  ✓          ✓                           ✓
+//	connectors/  ✓             ✓         ✓                  ✓          ✓                           ✓
+//	hooks/       settings.json hooks.json hooks/*.json       —          config/hooks.json           —
 //
 // standards/ and connectors/ have no native discovery mechanism anywhere, so
 // they land as reference copies in each agent's config home; the live copies
-// referenced by skill bodies stay in ~/.friday. "—" means the harness has no
-// documented surface for that content.
+// referenced by skill bodies stay in ~/.friday.
 //
-// hooks/ is the exception to the reference-copy rule: Claude Code activates only
-// the hooks declared in settings.json, so the claude preset merges the store's
-// hooks.json into that file's `hooks` key (merge-json strategy) instead of
+// "—" means friday maps nothing there yet — NOT that the agent lacks the
+// surface. Since these were first written, Codex, Copilot, and Antigravity
+// have all gained file-based hook surfaces (and Codex/Antigravity skills and
+// subagents); those cells are being wired progressively — see ROADMAP. Only
+// OpenCode and pi hooks stay unmappable here, being imperative TS plugins
+// rather than a declarative file.
+//
+// hooks/ is not a plain reference copy: an agent activates only the hooks its
+// config declares (Claude Code, e.g., ignores a loose ~/.claude/hooks/hooks.json
+// and reads only settings.json), so the claude preset merges the store's
+// hooks.json into settings.json's `hooks` key (merge-json strategy) rather than
 // dropping an inert copy the user must wire up by hand.
 
 var registry = map[string]Preset{
@@ -163,7 +169,12 @@ var registry = map[string]Preset{
 	//   - Aider takes context via `read:` entries in ~/.aider.conf.yml, not
 	//     a conventional instructions dir.
 	//   - Zed keeps global rules in its internal Rules Library, not files.
-	//   - Codeium (non-Windsurf) has no filesystem instruction path.
+	//   - Codeium has no filesystem instruction path.
+	//   - Windsurf / Cascade: dropped in v0.6.0. Cognition is folding it into
+	//     Devin Desktop (docs.windsurf.com 307-redirects to docs.devin.ai) and
+	//     the legacy Cascade line reached EOL 2026-07-01, so its paths are a
+	//     moving target. It can return as a `devin` preset once Devin Desktop's
+	//     config surface settles under its new name.
 	"codex": {
 		Name: "codex",
 		// Codex CLI reads ~/.codex/AGENTS.md, discovers Agent-Skills-standard
@@ -180,9 +191,34 @@ var registry = map[string]Preset{
 				Strategy: rules.StrategyConcatenate,
 			},
 			{From: rules.FromSpec{"skills/**/*"}, To: "skills/{relpath}"},
+			// Codex subagents are TOML at ~/.codex/agents/<name>.toml
+			// (name/description/developer_instructions). Render the Claude-shaped
+			// agents/*.md into that shape (push-only — other frontmatter is
+			// dropped). Schema per Codex docs; verify on a live install (ROADMAP).
+			// https://learn.chatgpt.com/docs/agent-configuration/subagents
+			{
+				From:     rules.FromSpec{"agents/*.md"},
+				To:       "agents/{stem}.toml",
+				Strategy: rules.StrategyMDToTOML,
+			},
 			{From: rules.FromSpec{"commands/*.md"}, To: "prompts/{filename}"},
 			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
 			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
+			// Codex CLI reads ~/.codex/hooks.json and runs the same PreToolUse
+			// hooks dialect as Claude Code (top-level `hooks` key; a matched
+			// PreToolUse command that exits 2 blocks the tool call). The store
+			// carries a Codex-shaped source that runs the shared guard in
+			// exit-2 mode; the plugin marker rewrites to $HOME/.friday like the
+			// claude rule. merge-json is push-only, drift-exempt, confirm-first.
+			// NOTE: the tool matcher ("Bash") and the exit-2 deny are per Codex's
+			// docs; verify against a live Codex install (see ROADMAP).
+			// https://learn.chatgpt.com/docs/hooks
+			{
+				From:     rules.FromSpec{"hooks/codex/hooks.json"},
+				To:       "hooks.json",
+				Strategy: rules.StrategyMergeJSON,
+				Replace:  map[string]string{pluginRootMarker: "$HOME/.friday"},
+			},
 		},
 		// Codex reads AGENTS.md at the repo root at project scope.
 		// https://developers.openai.com/codex/guides/agents-md
@@ -200,8 +236,17 @@ var registry = map[string]Preset{
 		// OpenCode follows XDG: global config at $HOME/.config/opencode.
 		Target: ".config/opencode",
 		Rules: []*rules.Rule{
-			{From: entryPlus(), To: "AGENTS.md"},
-			{From: rules.FromSpec{"rules/*.md"}, To: "rules/{filename}"},
+			// OpenCode has no native rules/ dir — AGENTS.md is the instruction
+			// file (auto-loaded, walked cwd-up). Concatenate core + rules into
+			// it (matching project scope and the other AGENTS.md agents) rather
+			// than writing an inert rules/ tree OpenCode never reads. A store can
+			// still register individual files via opencode.json's `instructions`
+			// glob by hand. https://opencode.ai/docs/rules/
+			{
+				From:     entryPlus("rules/*.md"),
+				To:       "AGENTS.md",
+				Strategy: rules.StrategyConcatenate,
+			},
 			{
 				From:             rules.FromSpec{"skills/**/*"},
 				To:               "skills/{relpath}",
@@ -274,6 +319,20 @@ var registry = map[string]Preset{
 			},
 			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
 			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
+			// Copilot CLI loads every ~/.copilot/hooks/*.json alphabetically,
+			// so friday writes its own dedicated file (no co-ownership). Copilot
+			// denies differently from Claude/Codex: a `preToolUse` hook returns
+			// {"permissionDecision":"deny",...} on stdout and exits 0 (a non-zero
+			// exit there is only a warning), so the shared guard runs in
+			// copilot-json mode. NOTE: the tool matcher ("bash") follows Copilot's
+			// docs; verify on a live install (see ROADMAP).
+			// https://docs.github.com/en/copilot/reference/hooks-reference
+			{
+				From:     rules.FromSpec{"hooks/copilot/hooks.json"},
+				To:       "hooks/friday-git-guard.json",
+				Strategy: rules.StrategyMergeJSON,
+				Replace:  map[string]string{pluginRootMarker: "$HOME/.friday"},
+			},
 		},
 		// Project scope: .github/copilot-instructions.md, .github/skills/,
 		// and repo-level custom agents in .github/agents/*.agent.md.
@@ -293,38 +352,6 @@ var registry = map[string]Preset{
 			},
 		},
 	},
-	"windsurf": {
-		Name: "windsurf",
-		// Windsurf (rebranded Devin Desktop by Cognition, June 2026; the
-		// docs and paths still say windsurf). Global rules are a single
-		// memories/global_rules.md capped at 6000 characters — keep core.md
-		// + rules lean. User workflows live in global_workflows/.
-		// https://docs.windsurf.com/windsurf/cascade/memories
-		// https://docs.windsurf.com/windsurf/cascade/workflows
-		Target: ".codeium/windsurf",
-		Rules: []*rules.Rule{
-			{
-				From:     entryPlus("rules/*.md"),
-				To:       "memories/global_rules.md",
-				Strategy: rules.StrategyConcatenate,
-				MaxBytes: 6000,
-			},
-			{From: rules.FromSpec{"commands/*.md"}, To: "global_workflows/{filename}"},
-			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
-			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
-		},
-		// At project scope it honors a root AGENTS.md (always-on, no
-		// frontmatter) and workspace workflows in .windsurf/workflows/.
-		ProjectTarget: ".",
-		ProjectRules: []*rules.Rule{
-			{
-				From:     entryPlus("rules/*.md"),
-				To:       "AGENTS.md",
-				Strategy: rules.StrategyConcatenate,
-			},
-			{From: rules.FromSpec{"commands/*.md"}, To: ".windsurf/workflows/{filename}"},
-		},
-	},
 	"antigravity": {
 		Name: "antigravity",
 		// Google Antigravity reads global rules from ~/.gemini/GEMINI.md
@@ -341,9 +368,40 @@ var registry = map[string]Preset{
 				To:       "GEMINI.md",
 				Strategy: rules.StrategyConcatenate,
 			},
+			// Antigravity gained Agent-Skills support; global skills load from
+			// ~/.gemini/config/skills/ across all Antigravity products (SKILL.md
+			// with the standard frontmatter, so no dialect adaptation). Path per
+			// Google Codelabs; verify on a live install (see ROADMAP).
+			{From: rules.FromSpec{"skills/**/*"}, To: "config/skills/{relpath}"},
+			// Antigravity subagents (LOW CONFIDENCE — its docs are an unreadable
+			// SPA). The CLI format the audit found is
+			// ~/.gemini/antigravity-cli/agents/<name>/agent.json; render
+			// agents/*.md into that JSON (push-only). Verify BOTH the path and
+			// the agent.json field names on a live install before relying on it
+			// (see ROADMAP; the body currently lands under "prompt" as a guess).
+			{
+				From:     rules.FromSpec{"agents/*.md"},
+				To:       "antigravity-cli/agents/{stem}/agent.json",
+				Strategy: rules.StrategyMDToJSON,
+			},
 			{From: rules.FromSpec{"commands/*.md"}, To: "antigravity/global_workflows/{filename}"},
 			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
 			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
+			// Antigravity reads global hooks from ~/.gemini/config/hooks.json.
+			// Its wrapper is a user-named group → event → matcher+hooks[], and it
+			// denies via {"decision":"deny","reason":...} on stdout with exit 0
+			// (NOT exit 2), so the shared guard runs in antigravity-json mode.
+			// LOW CONFIDENCE: Antigravity's docs are a client-rendered SPA, so this
+			// dialect (paths, the `decision` field, and especially the
+			// absolute-path command requirement vs. $HOME shell-expansion) is
+			// corroborated only from secondary sources — verify on a live install
+			// before relying on it (see ROADMAP).
+			{
+				From:     rules.FromSpec{"hooks/antigravity/hooks.json"},
+				To:       "config/hooks.json",
+				Strategy: rules.StrategyMergeJSON,
+				Replace:  map[string]string{pluginRootMarker: "$HOME/.friday"},
+			},
 		},
 		ProjectTarget: ".",
 		ProjectRules: []*rules.Rule{

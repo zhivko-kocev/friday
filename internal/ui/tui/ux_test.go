@@ -90,13 +90,13 @@ func TestRenderDiffWindowsDeepEdit(t *testing.T) {
 func TestSurfacesWarning(t *testing.T) {
 	st := newStyles()
 	changes := []engine.Change{{
-		Adapter: "windsurf", Direction: engine.DirPush, Action: engine.ActionUpdate,
-		DestRel: "global_rules.md", Warning: "over max_bytes",
+		Adapter: "claude", Direction: engine.DirPush, Action: engine.ActionUpdate,
+		DestRel: "CLAUDE.md", Warning: "over max_bytes",
 	}}
 	if out := renderChanges(changes, st, false); !strings.Contains(out, "over max_bytes") {
 		t.Errorf("renderChanges swallowed the warning:\n%s", out)
 	}
-	info := engine.ConflictInfo{Direction: engine.DirPush, DestRel: "global_rules.md", Warning: "over max_bytes"}
+	info := engine.ConflictInfo{Direction: engine.DirPush, DestRel: "CLAUDE.md", Warning: "over max_bytes"}
 	if out := renderConflict(info, nil, st); !strings.Contains(out, "over max_bytes") {
 		t.Errorf("renderConflict swallowed the warning:\n%s", out)
 	}

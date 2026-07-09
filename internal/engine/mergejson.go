@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 
 	"github.com/zhivko-kocev/friday/internal/textnorm"
 )
@@ -164,7 +165,14 @@ func decodeObject(data []byte) (map[string]any, error) {
 	return obj, nil
 }
 
-// HookCommands extracts every "command" string from a hooks JSON blob so a
+// hookCommandKeys are the JSON keys that carry a shell command in the hook
+// dialects friday wires: "command" (Claude, Codex, Antigravity), and the
+// per-shell "bash"/"powershell" fields Copilot uses. HookCommands surfaces all
+// of them so the confirm prompt shows the real command for every agent, not a
+// byte count.
+var hookCommandKeys = []string{"command", "bash", "powershell"}
+
+// HookCommands extracts every shell-command string from a hooks JSON blob so a
 // confirmer can show exactly what a merge-json write would install. Best-effort:
 // unparseable input yields nil and the caller falls back to a byte count.
 func HookCommands(src []byte) []string {
@@ -177,11 +185,20 @@ func HookCommands(src []byte) []string {
 	walk = func(v any) {
 		switch t := v.(type) {
 		case map[string]any:
-			if c, ok := t["command"].(string); ok {
-				out = append(out, c)
+			for _, key := range hookCommandKeys {
+				if c, ok := t[key].(string); ok {
+					out = append(out, c)
+				}
 			}
-			for _, val := range t {
-				walk(val)
+			// Recurse in sorted key order so the confirm/doctor output is stable
+			// for a hand-written file carrying several commands.
+			keys := make([]string, 0, len(t))
+			for k := range t {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				walk(t[k])
 			}
 		case []any:
 			for _, e := range t {
