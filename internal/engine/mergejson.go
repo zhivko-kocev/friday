@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 
 	"github.com/zhivko-kocev/friday/internal/textnorm"
 )
@@ -189,8 +190,15 @@ func HookCommands(src []byte) []string {
 					out = append(out, c)
 				}
 			}
-			for _, val := range t {
-				walk(val)
+			// Recurse in sorted key order so the confirm/doctor output is stable
+			// for a hand-written file carrying several commands.
+			keys := make([]string, 0, len(t))
+			for k := range t {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				walk(t[k])
 			}
 		case []any:
 			for _, e := range t {

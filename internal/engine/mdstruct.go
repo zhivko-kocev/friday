@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/zhivko-kocev/friday/internal/frontmatter"
@@ -56,11 +57,26 @@ func mdToJSON(rec mdRecord) ([]byte, error) {
 	return marshalCanonical(obj)
 }
 
-// tomlBasicString quotes s as a single-line TOML basic string, escaping the
-// characters the spec requires.
+// tomlBasicString quotes s as a single-line TOML basic string.
 func tomlBasicString(s string) string {
+	return `"` + tomlEscape(s, false) + `"`
+}
+
+// tomlMultiline renders s as a TOML multiline basic string. TOML trims the
+// newline right after the opening delimiter, so the added one just keeps the
+// body on its own line.
+func tomlMultiline(s string) string {
+	return "\"\"\"\n" + tomlEscape(s, true) + "\"\"\""
+}
+
+// tomlEscape escapes s for a TOML basic string. Backslash and double-quote are
+// always escaped — so no accidental `"""` can close a multiline string early
+// and the value decodes back to s exactly. In multiline mode literal newlines
+// and tabs are kept (they are legal there); otherwise they are escaped. Other
+// C0 control characters become \uXXXX, which a single-line string requires and
+// a multiline one still benefits from.
+func tomlEscape(s string, multiline bool) string {
 	var b strings.Builder
-	b.WriteByte('"')
 	for _, r := range s {
 		switch r {
 		case '\\':
@@ -68,25 +84,26 @@ func tomlBasicString(s string) string {
 		case '"':
 			b.WriteString(`\"`)
 		case '\n':
-			b.WriteString(`\n`)
+			if multiline {
+				b.WriteByte('\n')
+			} else {
+				b.WriteString(`\n`)
+			}
+		case '\t':
+			if multiline {
+				b.WriteByte('\t')
+			} else {
+				b.WriteString(`\t`)
+			}
 		case '\r':
 			b.WriteString(`\r`)
-		case '\t':
-			b.WriteString(`\t`)
 		default:
-			b.WriteRune(r)
+			if r < 0x20 {
+				fmt.Fprintf(&b, `\u%04X`, r)
+			} else {
+				b.WriteRune(r)
+			}
 		}
 	}
-	b.WriteByte('"')
 	return b.String()
-}
-
-// tomlMultiline renders s as a TOML multiline basic string. Backslash and
-// double-quote are escaped so no accidental `"""` can close the string early
-// and the value decodes back to s exactly; TOML trims the newline right after
-// the opening delimiter, so the added one just keeps the body on its own line.
-func tomlMultiline(s string) string {
-	esc := strings.ReplaceAll(s, `\`, `\\`)
-	esc = strings.ReplaceAll(esc, `"`, `\"`)
-	return "\"\"\"\n" + esc + "\"\"\""
 }

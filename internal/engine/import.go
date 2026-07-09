@@ -49,6 +49,10 @@ func planImport(_ *drift.Owned, adapterName string, ad *config.Adapter, storeAbs
 			skip(ri, r.To, "rule has frontmatter_strip — importing would re-inject stripped fields")
 			continue
 		}
+		if r.Strategy == rules.StrategyMDToTOML || r.Strategy == rules.StrategyMDToJSON {
+			skip(ri, r.To, "md-to-toml/md-to-json rule cannot be imported (markdown→structured-config drops frontmatter, irreversible)")
+			continue
+		}
 		glob, ok := rules.ToGlob(r.To)
 		if !ok {
 			skip(ri, r.To, fmt.Sprintf("template %q is not invertible", r.To))
