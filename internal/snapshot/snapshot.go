@@ -60,6 +60,17 @@ func Dir() (string, error) {
 	return filepath.Join(base, "friday", "snapshots"), nil
 }
 
+// BaseLookup returns a resolver from a drift baseline hash to its blob content,
+// for 3-way merge base recovery (a baseline hash doubles as a blob key). Nil
+// when the snapshot dir can't be resolved. Shared by every conflict resolver.
+func BaseLookup() func(string) ([]byte, bool) {
+	dir, err := Dir()
+	if err != nil {
+		return nil
+	}
+	return func(h string) ([]byte, bool) { return ReadBlob(dir, h) }
+}
+
 // Record persists one snapshot of the given writes. A nil error with a nil
 // snapshot means there was nothing to record.
 func Record(dir string, files []FileWrite) (*Snapshot, error) {

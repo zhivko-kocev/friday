@@ -81,7 +81,15 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 		}
 		changes = filterOnly(changes, opts.Only)
 
+		aborted := false
 		for i := range changes {
+			// Cancellation checkpoint: stop before touching the next change so a
+			// long apply can be halted (not just conflicts fast-skipped). Only
+			// the changes processed so far are reported/persisted.
+			if aborted = canceled(opts.Abort); aborted {
+				changes = changes[:i]
+				break
+			}
 			ch := &changes[i]
 			resolveConflict(ch, store, opts)
 			if ch.mergedPush {
@@ -104,14 +112,21 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 			}
 		}
 		all = append(all, changes...)
+		if aborted {
+			break // don't start the next adapter
+		}
 	}
 
 	// Only persist the drift store if a write actually happened. Avoids
 	// touching the on-disk file (and its mtime) for pure status / dry-run
 	// flows that hit run() with DryRun=false but produce no changes.
 	if !opts.DryRun && wrote {
+		warnf := opts.Warnf
+		if warnf == nil {
+			warnf = output.Warn // CLI default; the control room sets a sink
+		}
 		if err := store.Save(); err != nil {
-			output.Warn("failed to save drift store: %v", err)
+			warnf("failed to save drift store: %v", err)
 		}
 	}
 	return all, nil
@@ -135,6 +150,20 @@ func filterOnly(changes []Change, only []string) []Change {
 		}
 	}
 	return out
+}
+
+// canceled reports whether an abort channel has been closed or signaled. A nil
+// channel never cancels (the CLI's behavior).
+func canceled(abort <-chan struct{}) bool {
+	if abort == nil {
+		return false
+	}
+	select {
+	case <-abort:
+		return true
+	default:
+		return false
+	}
 }
 
 func matchesAny(path string, globs []string) bool {
@@ -228,6 +257,7 @@ func resolveConflict(ch *Change, store *drift.Store, opts Options) {
 		DestRel:    ch.DestRel,
 		OldContent: ch.OldContent,
 		NewContent: ch.NewContent,
+		Warning:    ch.Warning,
 	}
 	if opts.BaseLookup != nil {
 		var baseHash string

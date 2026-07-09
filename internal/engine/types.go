@@ -113,6 +113,9 @@ type ConflictInfo struct {
 	// recovered from the snapshot blob store via the drift baseline hash.
 	// Nil when unknown (no snapshot yet); the prompt then omits merge.
 	BaseContent []byte
+	// Warning is any advisory the change carried (e.g. over max_bytes) so the
+	// resolver can surface it alongside the diff.
+	Warning string
 }
 
 // ConflictResolver is invoked when a write would clobber edits on the other
@@ -130,6 +133,18 @@ type Options struct {
 	// BaseLookup resolves a drift baseline hash to its content (snapshot
 	// blob store). Nil disables merge-base recovery.
 	BaseLookup func(hash string) ([]byte, bool)
+	// Warnf, when non-nil, receives non-fatal advisories the engine would
+	// otherwise print through internal/output (currently only a drift-store
+	// save failure after a successful apply). The CLI leaves it nil and keeps
+	// printing exactly as before; the interactive control room sets it so
+	// nothing writes to stdout while it owns the alt-screen.
+	Warnf func(format string, args ...any)
+	// Abort, when non-nil, cancels an in-progress apply: once it is closed (or
+	// receives), the engine stops before the next change and returns what it has
+	// already written, still persisting the drift store. Lets the control room's
+	// Ctrl-C halt a long apply, not just fast-skip conflicts. Nil = no
+	// cancellation (the CLI's behavior, unchanged).
+	Abort <-chan struct{}
 	// PulledStorePaths accumulates the store files captured by pull-direction
 	// writes over one logical pull operation. runWith applies each adapter
 	// before planning the next, and the interactive walk makes a separate Pull
