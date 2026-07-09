@@ -33,11 +33,7 @@ func interactiveResolver() engine.ConflictResolver {
 // baseLookup resolves drift baseline hashes to snapshot blobs so conflict
 // prompts can offer a 3-way merge. Nil when the snapshot dir is unavailable.
 func baseLookup() func(string) ([]byte, bool) {
-	dir, err := snapshot.Dir()
-	if err != nil {
-		return nil
-	}
-	return func(h string) ([]byte, bool) { return snapshot.ReadBlob(dir, h) }
+	return snapshot.BaseLookup()
 }
 
 func labelsFor(dir engine.Direction) (canonical, dest string) {

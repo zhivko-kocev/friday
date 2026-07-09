@@ -8,7 +8,7 @@ import (
 
 func TestCompletionsForCommands(t *testing.T) {
 	names := completionsFor("")
-	for _, want := range []string{"push", "pull", "sync", "status", "init", "setup", "share", "list", "ls", "remote", "doctor", "undo", "completion", "version", "help"} {
+	for _, want := range []string{"push", "pull", "sync", "status", "init", "setup", "share", "remote", "doctor", "undo", "completion", "version", "help"} {
 		if !slices.Contains(names, want) {
 			t.Errorf("top-level completions missing %q (got %v)", want, names)
 		}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/zhivko-kocev/friday/internal/output"
+	"github.com/zhivko-kocev/friday/internal/ui"
 )
 
 // version is a fallback default; Run overwrites it with the build-time
@@ -42,7 +43,6 @@ func commandTable() []command {
 		{name: "sync", summary: "capture local edits, then fan them to every agent", run: cmdSync, flags: func() *flag.FlagSet { return syncFlags(&syncOpts{}) }, completesAdapters: true},
 		{name: "status", summary: "show what would change (no writes)", run: cmdStatus, flags: func() *flag.FlagSet { return statusFlags(&statusOpts{}) }, completesAdapters: true},
 		{name: "share", summary: "propose your store changes for team review (opens an MR)", run: cmdShare, flags: func() *flag.FlagSet { return proposeFlags(&proposeOpts{}) }},
-		{name: "list", aliases: []string{"ls"}, summary: "list configured agents and where they install", run: cmdList},
 
 		{name: "push", summary: "one-way sync: store → installed agents", advanced: true, run: cmdPush, flags: func() *flag.FlagSet { return pushFlags(&pushOpts{}) }, completesAdapters: true},
 		{name: "pull", summary: "one-way sync: agent edits → store (--discover finds new files)", advanced: true, run: cmdPull, flags: func() *flag.FlagSet { return pullFlags(&pullOpts{}) }, completesAdapters: true},
@@ -68,6 +68,12 @@ func Run(args []string, ver string) int {
 	version = ver
 	args = applyGlobalFlags(args)
 	if len(args) == 0 {
+		// A real terminal opens the interactive control room; anything piped or
+		// redirected (CI, a shell pipeline, tests) keeps the plain usage + exit-1
+		// path byte-for-byte. Usage stays reachable via `friday help` / `-h`.
+		if ui.Interactive() {
+			return launchTUI(version)
+		}
 		printUsage()
 		return 1
 	}

@@ -299,6 +299,15 @@ func printStatusOrigin(cfg *config.Config) {
 	for _, name := range cfg.AdapterNames() {
 		target, _ := cfg.AdapterTargetAbs(name)
 		output.Line(output.LevelInfo, "%-12s %-11s %s", name, origin, target)
+		// Each adapter's rule mappings (strategy: from → to) — the one view the
+		// removed `list` command uniquely offered, folded in here.
+		for _, r := range cfg.Adapters[name].Rules {
+			strat := r.Strategy
+			if strat == "" {
+				strat = "copy"
+			}
+			output.Dim("  %s  %v → %s", strat, []string(r.From), r.To)
+		}
 	}
 	if manifest {
 		output.Dim("defined in %s — edit or delete an entry there", cfg.ManifestPath)

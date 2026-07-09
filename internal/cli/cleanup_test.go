@@ -50,11 +50,3 @@ func TestDoctorJSONFlagIsDiscoverable(t *testing.T) {
 		t.Errorf("doctor --json not surfaced in completion/help (got %v)", completionsFor("doctor"))
 	}
 }
-
-func TestListRejectsArgs(t *testing.T) {
-	output.SetColor(false)
-	t.Cleanup(func() { output.SetColor(false) })
-	if code := cmdList([]string{"adapters"}); code != 1 {
-		t.Errorf("list with an argument exited %d, want 1", code)
-	}
-}

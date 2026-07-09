@@ -88,19 +88,7 @@ func runPush(cfg *config.Config, adapters []string, o pushOpts) int {
 // compile) records one. Best-effort: a failed snapshot warns but never fails
 // the writes that already succeeded.
 func recordSnapshot(changes []engine.Change) {
-	var writes []snapshot.FileWrite
-	for _, ch := range changes {
-		if ch.Action != engine.ActionCreate && ch.Action != engine.ActionUpdate {
-			continue
-		}
-		writes = append(writes, snapshot.FileWrite{
-			Adapter: ch.Adapter,
-			Path:    ch.DestPath,
-			Old:     ch.OldContent,
-			New:     ch.NewContent,
-			Src:     ch.SrcContent,
-		})
-	}
+	writes := engine.SnapshotWrites(changes)
 	if len(writes) == 0 {
 		return
 	}

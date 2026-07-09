@@ -126,7 +126,9 @@ func TestStatusCheckJSONGate(t *testing.T) {
 }
 
 // captureStdout swaps os.Stdout for a pipe while fn runs and returns what was
-// written, mirroring the output package's own test helper.
+// written. The pipe is drained in a goroutine WHILE fn runs: an OS pipe buffer
+// is small (especially on Windows), so reading only after fn returns deadlocks
+// as soon as fn writes more than the buffer holds.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout
@@ -135,14 +137,16 @@ func captureStdout(t *testing.T, fn func()) string {
 		t.Fatalf("pipe: %v", err)
 	}
 	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
 	fn()
 	_ = w.Close()
 	os.Stdout = old
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r); err != nil {
-		t.Fatalf("copy: %v", err)
-	}
-	return buf.String()
+	return <-done
 }
 
 // TestStatusRowGlyphs pins the two-column encoding across the reconcile

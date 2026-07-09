@@ -57,3 +57,10 @@ func presetAdapters() map[string]*config.Adapter {
 	}
 	return out
 }
+
+// dirExists reports whether path is an existing directory. Used to flag an
+// adapter as "installed" — i.e. friday push (no args) will target it.
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
