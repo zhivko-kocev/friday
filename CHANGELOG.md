@@ -12,6 +12,9 @@ All notable changes to friday are documented here. The format follows [Keep a Ch
   - **Project scope too.** `friday setup` wires hooks into the repo's `.claude/settings.json`, copying the hook scripts in-repo and referencing them via `${CLAUDE_PROJECT_DIR}` so a teammate who clones the repo gets working hooks.
 - **`friday doctor` reports hooks-wiring state** — whether `settings.json` carries the store's hooks and is current — replacing the old "wire it by hand" hint, and warns when a hook command references an unquoted path (`$HOME`, `${CLAUDE_PROJECT_DIR}`, …) that would break on a path containing a space.
 
+### Removed
+- **`windsurf` preset.** Cognition is folding Windsurf/Cascade into Devin Desktop (`docs.windsurf.com` now 307-redirects to `docs.devin.ai`) and the legacy Cascade line reached end-of-life on 2026-07-01, so its config paths are a moving target. friday drops the preset rather than track a renaming product; it can return as a `devin` preset once Devin Desktop's config surface settles. Existing `~/.codeium/windsurf` targets stop syncing — re-add a hand-written adapter in `friday.yaml` if you still need them.
+
 ## [0.5.0] — 2026-07-09
 
 **The control room.** Running bare `friday` on a real terminal now opens a full-screen interactive TUI — pick and drive the everyday commands without remembering flags. It's a new frontend over the same engine and verbs: no new commands, no daemon, nothing running in the background. The moment you pass a flag or subcommand, or pipe/redirect the output, you get the exact one-shot CLI you had before — byte-for-byte, same exit codes.

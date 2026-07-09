@@ -66,27 +66,33 @@ const pluginRootMarker = "${CLAUDE_PLUGIN_ROOT}"
 // data and a new rule can't forget it.
 var storeReplace = map[string]string{pluginRootMarker: "~/.friday"}
 
-// The presets map every store directory into every agent that has a
-// documented place for it (paths verified against each harness's docs,
-// July 2026):
+// The presets map every store directory into the place each agent documents
+// for it (paths verified against each harness's docs, July 2026):
 //
-//	store        claude     codex     copilot            opencode   windsurf           antigravity                 pi
-//	core+rules   CLAUDE.md  AGENTS.md copilot-instr..md  AGENTS.md  memories/global..  GEMINI.md                   AGENTS.md
-//	agents/      agents/    —         agents/*.agent.md  agents/    —                  —                           —
-//	commands/    commands/  prompts/  —                  commands/  global_workflows/  antigravity/global_workfl.  prompts/
-//	skills/      skills/    skills/   skills/            skills/    —                  —                           skills/
-//	standards/   ✓          ✓         ✓                  ✓          ✓                  ✓                           ✓
-//	connectors/  ✓          ✓         ✓                  ✓          ✓                  ✓                           ✓
-//	hooks/       settings.json —      —                  —          —                  —                           —
+//	store        claude        codex     copilot            opencode   antigravity                 pi
+//	core+rules   CLAUDE.md     AGENTS.md copilot-instr..md  AGENTS.md  GEMINI.md                   AGENTS.md
+//	agents/      agents/       —         agents/*.agent.md  agents/    —                           —
+//	commands/    commands/     prompts/  —                  commands/  antigravity/global_workfl.  prompts/
+//	skills/      skills/       skills/   skills/            skills/    —                           skills/
+//	standards/   ✓             ✓         ✓                  ✓          ✓                           ✓
+//	connectors/  ✓             ✓         ✓                  ✓          ✓                           ✓
+//	hooks/       settings.json —         —                  —          —                           —
 //
 // standards/ and connectors/ have no native discovery mechanism anywhere, so
 // they land as reference copies in each agent's config home; the live copies
-// referenced by skill bodies stay in ~/.friday. "—" means the harness has no
-// documented surface for that content.
+// referenced by skill bodies stay in ~/.friday.
 //
-// hooks/ is the exception to the reference-copy rule: Claude Code activates only
-// the hooks declared in settings.json, so the claude preset merges the store's
-// hooks.json into that file's `hooks` key (merge-json strategy) instead of
+// "—" means friday maps nothing there yet — NOT that the agent lacks the
+// surface. Since these were first written, Codex, Copilot, and Antigravity
+// have all gained file-based hook surfaces (and Codex/Antigravity skills and
+// subagents); those cells are being wired progressively — see ROADMAP. Only
+// OpenCode and pi hooks stay unmappable here, being imperative TS plugins
+// rather than a declarative file.
+//
+// hooks/ is not a plain reference copy: an agent activates only the hooks its
+// config declares (Claude Code, e.g., ignores a loose ~/.claude/hooks/hooks.json
+// and reads only settings.json), so the claude preset merges the store's
+// hooks.json into settings.json's `hooks` key (merge-json strategy) rather than
 // dropping an inert copy the user must wire up by hand.
 
 var registry = map[string]Preset{
@@ -163,7 +169,12 @@ var registry = map[string]Preset{
 	//   - Aider takes context via `read:` entries in ~/.aider.conf.yml, not
 	//     a conventional instructions dir.
 	//   - Zed keeps global rules in its internal Rules Library, not files.
-	//   - Codeium (non-Windsurf) has no filesystem instruction path.
+	//   - Codeium has no filesystem instruction path.
+	//   - Windsurf / Cascade: dropped in v0.6.0. Cognition is folding it into
+	//     Devin Desktop (docs.windsurf.com 307-redirects to docs.devin.ai) and
+	//     the legacy Cascade line reached EOL 2026-07-01, so its paths are a
+	//     moving target. It can return as a `devin` preset once Devin Desktop's
+	//     config surface settles under its new name.
 	"codex": {
 		Name: "codex",
 		// Codex CLI reads ~/.codex/AGENTS.md, discovers Agent-Skills-standard
@@ -291,38 +302,6 @@ var registry = map[string]Preset{
 				To:               ".github/agents/{stem}.agent.md",
 				FrontmatterStrip: []string{"tools", "model"},
 			},
-		},
-	},
-	"windsurf": {
-		Name: "windsurf",
-		// Windsurf (rebranded Devin Desktop by Cognition, June 2026; the
-		// docs and paths still say windsurf). Global rules are a single
-		// memories/global_rules.md capped at 6000 characters — keep core.md
-		// + rules lean. User workflows live in global_workflows/.
-		// https://docs.windsurf.com/windsurf/cascade/memories
-		// https://docs.windsurf.com/windsurf/cascade/workflows
-		Target: ".codeium/windsurf",
-		Rules: []*rules.Rule{
-			{
-				From:     entryPlus("rules/*.md"),
-				To:       "memories/global_rules.md",
-				Strategy: rules.StrategyConcatenate,
-				MaxBytes: 6000,
-			},
-			{From: rules.FromSpec{"commands/*.md"}, To: "global_workflows/{filename}"},
-			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
-			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
-		},
-		// At project scope it honors a root AGENTS.md (always-on, no
-		// frontmatter) and workspace workflows in .windsurf/workflows/.
-		ProjectTarget: ".",
-		ProjectRules: []*rules.Rule{
-			{
-				From:     entryPlus("rules/*.md"),
-				To:       "AGENTS.md",
-				Strategy: rules.StrategyConcatenate,
-			},
-			{From: rules.FromSpec{"commands/*.md"}, To: ".windsurf/workflows/{filename}"},
 		},
 	},
 	"antigravity": {

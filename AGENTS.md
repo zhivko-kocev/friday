@@ -1,11 +1,11 @@
 # friday
 
 One CLI to manage AI agent configs from a single canonical store. Push to every
-agent, pull edits back, sync across machines via git. Store: `~/.friday/`. Seven
+agent, pull edits back, sync across machines via git. Store: `~/.friday/`. Six
 built-in presets, with default agent targets: `claude` (`~/.claude`), `codex`
 (`~/.codex`), `copilot` (`~/.copilot`), `opencode` (`~/.config/opencode`),
-`windsurf` (`~/.codeium/windsurf`), `antigravity` (`~/.gemini`), and `pi`
-(`~/.pi/agent`) — all configurable via `friday.yaml`.
+`antigravity` (`~/.gemini`), and `pi` (`~/.pi/agent`) — all configurable via
+`friday.yaml`.
 
 Bare `friday` on a real terminal opens a full-screen interactive control room
 (TUI) over the same engine and verbs — a frontend, not new commands. Any
@@ -39,11 +39,11 @@ core.md               the entry file (concatenated into CLAUDE.md / AGENTS.md / 
                       also matched at core/core.md — legacy identity.md still accepted
 rules/*.md            behaviour rules
 standards/*.md        per-language baselines (not copied — reached via ~/.friday refs)
-agents/*.md           agent definitions (claude only)
-commands/*.md         slash-commands (claude only)
+agents/*.md           agent/subagent definitions (claude, copilot, opencode; codex/antigravity native formats being wired)
+commands/*.md         slash-commands / prompts / workflows (claude, codex, opencode, antigravity, pi)
 skills/<name>/*       skills (recursively mirrored)
-hooks/hooks.json      merged into ~/.claude/settings.json's `hooks` key (merge-json, confirm-first); scripts under hooks/ run from the store in place
-friday.yaml           adapter manifest — auto-seeded with all built-in presets (seven) at init
+hooks/hooks.json      merged into ~/.claude/settings.json's `hooks` key (merge-json, confirm-first); scripts under hooks/ run from the store in place. Codex/Copilot/Antigravity hook surfaces being wired — see ROADMAP
+friday.yaml           adapter manifest — auto-seeded with all built-in presets (six) at init
 .gitignore            scaffolded with secret + runtime-state patterns
 ```
 
@@ -72,7 +72,7 @@ internal/conflict/    interactive [k/t/d/s] prompt with line-LCS diff (LineDiff 
 internal/drift/       SHA256 store at $UserCacheDir/friday/state.json — flags external edits; owned.go tracks merge-json's own hook entries (hooks-owned.json)
 internal/frontmatter/ parse/strip YAML frontmatter in .md files (CRLF-tolerant)
 internal/git/         shells out to `git` for clone/pull/push/status
-internal/presets/     built-in adapter rule sets (claude/codex/copilot/opencode/windsurf/antigravity/pi)
+internal/presets/     built-in adapter rule sets (claude/codex/copilot/opencode/antigravity/pi)
 internal/initcmd/     `friday init` — prompts for a URL, clones or scaffolds
 internal/setupcmd/    `friday setup` / `promote` — apply store knowledge into a project's own config
 internal/output/      all console output (colored, TTY-aware)

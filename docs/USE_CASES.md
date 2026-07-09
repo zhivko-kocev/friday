@@ -56,8 +56,8 @@ Every rule rewrites the Claude-plugin path variable `${CLAUDE_PLUGIN_ROOT}` to
 `~/.friday` on push (and back on pull), so plugin-shaped knowledge repos (like
 developer-os) work unmodified.
 
-**Presets & the manifest.** friday ships **seven built-in presets** (claude,
-codex, copilot, opencode, windsurf, antigravity, pi). If `~/.friday/friday.yaml`
+**Presets & the manifest.** friday ships **six built-in presets** (claude,
+codex, copilot, opencode, antigravity, pi). If `~/.friday/friday.yaml`
 exists it is *authoritative* — friday uses exactly those adapters. If it's
 absent, friday falls back to the built-in presets. To customize, add or edit
 adapters in `friday.yaml` (it versions with your store).

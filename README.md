@@ -125,20 +125,24 @@ friday.yaml          Adapter manifest. Auto-seeded by `friday init` with all bui
 Every store directory maps into every agent that has a documented place for
 it (paths verified against each harness's docs):
 
-| Store dir     | `claude`<br>`~/.claude` | `codex`<br>`~/.codex` | `copilot`<br>`~/.copilot` | `opencode`<br>`~/.config/opencode` | `windsurf`<br>`~/.codeium/windsurf` | `antigravity`<br>`~/.gemini` | `pi`<br>`~/.pi/agent` |
-| ------------- | ----------- | ---------- | ------------------ | ----------- | -------------------- | ----------------------- | ---------- |
-| core + rules  | `CLAUDE.md` | `AGENTS.md`| `copilot-instructions.md` | `AGENTS.md` + `rules/` | `memories/global_rules.md` | `GEMINI.md` | `AGENTS.md` |
-| `agents/`     | `agents/`   | —          | `agents/*.agent.md`| `agents/`†  | —                    | —                       | —          |
-| `commands/`   | `commands/` | `prompts/` | —                  | `commands/` | `global_workflows/`  | `antigravity/global_workflows/` | `prompts/` |
-| `skills/`     | `skills/`   | `skills/`  | `skills/`          | `skills/`†  | —                    | —                       | `skills/`  |
-| `standards/`  | ✓           | ✓          | ✓                  | ✓           | ✓                    | ✓                       | ✓          |
-| `connectors/` | ✓           | ✓          | ✓                  | ✓           | ✓                    | ✓                       | ✓          |
-| `hooks/`      | `settings.json`‡ | —     | —                  | —           | —                    | —                       | —          |
+| Store dir     | `claude`<br>`~/.claude` | `codex`<br>`~/.codex` | `copilot`<br>`~/.copilot` | `opencode`<br>`~/.config/opencode` | `antigravity`<br>`~/.gemini` | `pi`<br>`~/.pi/agent` |
+| ------------- | ----------- | ---------- | ------------------ | ----------- | ----------------------- | ---------- |
+| core + rules  | `CLAUDE.md` | `AGENTS.md`| `copilot-instructions.md` | `AGENTS.md` + `rules/` | `GEMINI.md` | `AGENTS.md` |
+| `agents/`     | `agents/`   | —          | `agents/*.agent.md`| `agents/`†  | —                       | —          |
+| `commands/`   | `commands/` | `prompts/` | —                  | `commands/` | `antigravity/global_workflows/` | `prompts/` |
+| `skills/`     | `skills/`   | `skills/`  | `skills/`          | `skills/`†  | —                       | `skills/`  |
+| `standards/`  | ✓           | ✓          | ✓                  | ✓           | ✓                       | ✓          |
+| `connectors/` | ✓           | ✓          | ✓                  | ✓           | ✓                       | ✓          |
+| `hooks/`      | `settings.json`‡ | —     | —                  | —           | —                       | —          |
 
-† frontmatter adapted to the harness's dialect. `—` means the harness has no
-documented surface for that content. `standards/` and `connectors/` have no
-native discovery mechanism anywhere, so they land as reference copies in each
-agent's config home.
+† frontmatter adapted to the harness's dialect. `—` means friday maps nothing
+there **yet** — not that the agent lacks the surface. Since this table was first
+written, Codex, Copilot, and Antigravity have all gained file-based hook
+surfaces (and Codex/Antigravity native skills and subagents); those cells are
+being wired in progressively (see [ROADMAP](ROADMAP.md)). OpenCode and pi hooks
+stay `—` because they are imperative TypeScript plugins, not a declarative file.
+`standards/` and `connectors/` have no native discovery mechanism anywhere, so
+they land as reference copies in each agent's config home.
 
 ‡ Claude Code activates only the hooks declared in `settings.json`, so friday
 merges `hooks/hooks.json` into its `hooks` key rather than dropping an inert
@@ -152,6 +156,8 @@ unmodified, and cross-references always resolve against the store.
 Paths verified against each agent's current documentation (Claude Code, [Codex CLI](https://developers.openai.com/codex/guides/agents-md), [OpenCode](https://opencode.ai/docs/config/), [Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions)).
 
 **Cursor** does not currently expose user-level rules through the filesystem; its global rules live inside Cursor's settings UI. The cursor preset was removed in v0.0.4. If Cursor adds filesystem-backed global rules (open feature request in their forum), the preset will return.
+
+**Windsurf** was removed in v0.6.0. Cognition is folding Windsurf/Cascade into Devin Desktop (`docs.windsurf.com` now 307-redirects to `docs.devin.ai`) and the legacy Cascade line reached end-of-life on 2026-07-01, so its config paths are a moving target. It can return as a `devin` preset once Devin Desktop's config surface settles under its new name.
 
 To disable an adapter, delete its entry from `friday.yaml`. To customize a target dir or rule, edit it. The presets only seed the manifest at init time; they don't run again.
 

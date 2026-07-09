@@ -58,7 +58,6 @@ func TestPresetCapabilityMatrix(t *testing.T) {
 		"codex":       {"rules/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
 		"copilot":     {"rules/*.md", "agents/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
 		"opencode":    {"rules/*.md", "agents/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
-		"windsurf":    {"rules/*.md", "commands/*.md", "standards/*.md", "connectors/*.md"},
 		"antigravity": {"rules/*.md", "commands/*.md", "standards/*.md", "connectors/*.md"},
 		"pi":          {"rules/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
 	}
@@ -86,7 +85,7 @@ func TestPresetCapabilityMatrix(t *testing.T) {
 
 func TestNamesIsSortedAndComplete(t *testing.T) {
 	names := Names()
-	want := []string{"antigravity", "claude", "codex", "copilot", "opencode", "pi", "windsurf"}
+	want := []string{"antigravity", "claude", "codex", "copilot", "opencode", "pi"}
 	if !reflect.DeepEqual(names, want) {
 		t.Errorf("Names() = %v, want %v", names, want)
 	}

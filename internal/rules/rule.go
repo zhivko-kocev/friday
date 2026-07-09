@@ -31,10 +31,11 @@ type Rule struct {
 	Separator        string            `yaml:"separator,omitempty"`
 	FrontmatterStrip []string          `yaml:"frontmatter_strip,omitempty"`
 	Replace          map[string]string `yaml:"replace,omitempty"`
-	// MaxBytes flags outputs larger than the agent can consume (e.g.
-	// Windsurf caps global_rules.md at 6000 chars). Friday still writes the
-	// file — the agent's truncation behavior is its own — but every push
-	// and status report carries the warning. 0 = no limit.
+	// MaxBytes flags outputs larger than the agent can consume (e.g. an agent
+	// that caps a concatenated global-rules file at N chars). No built-in
+	// preset sets it today, but it stays for hand-written friday.yaml rules:
+	// friday still writes the file — the agent's truncation behavior is its
+	// own — but every push and status report carries the warning. 0 = no limit.
 	MaxBytes int `yaml:"max_bytes,omitempty"`
 }
 
