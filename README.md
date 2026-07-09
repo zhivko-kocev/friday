@@ -127,10 +127,10 @@ it (paths verified against each harness's docs):
 
 | Store dir     | `claude`<br>`~/.claude` | `codex`<br>`~/.codex` | `copilot`<br>`~/.copilot` | `opencode`<br>`~/.config/opencode` | `antigravity`<br>`~/.gemini` | `pi`<br>`~/.pi/agent` |
 | ------------- | ----------- | ---------- | ------------------ | ----------- | ----------------------- | ---------- |
-| core + rules  | `CLAUDE.md` | `AGENTS.md`| `copilot-instructions.md` | `AGENTS.md` + `rules/` | `GEMINI.md` | `AGENTS.md` |
+| core + rules  | `CLAUDE.md` | `AGENTS.md`| `copilot-instructions.md` | `AGENTS.md` | `GEMINI.md` | `AGENTS.md` |
 | `agents/`     | `agents/`   | —          | `agents/*.agent.md`| `agents/`†  | —                       | —          |
 | `commands/`   | `commands/` | `prompts/` | —                  | `commands/` | `antigravity/global_workflows/` | `prompts/` |
-| `skills/`     | `skills/`   | `skills/`  | `skills/`          | `skills/`†  | —                       | `skills/`  |
+| `skills/`     | `skills/`   | `skills/`  | `skills/`          | `skills/`†  | `config/skills/`        | `skills/`  |
 | `standards/`  | ✓           | ✓          | ✓                  | ✓           | ✓                       | ✓          |
 | `connectors/` | ✓           | ✓          | ✓                  | ✓           | ✓                       | ✓          |
 | `hooks/`      | `settings.json`‡ | `hooks.json`§ | `hooks/*.json`§ | —      | `config/hooks.json`§    | —          |

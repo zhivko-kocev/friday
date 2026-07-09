@@ -73,7 +73,7 @@ var storeReplace = map[string]string{pluginRootMarker: "~/.friday"}
 //	core+rules   CLAUDE.md     AGENTS.md copilot-instr..md  AGENTS.md  GEMINI.md                   AGENTS.md
 //	agents/      agents/       —         agents/*.agent.md  agents/    —                           —
 //	commands/    commands/     prompts/  —                  commands/  antigravity/global_workfl.  prompts/
-//	skills/      skills/       skills/   skills/            skills/    —                           skills/
+//	skills/      skills/       skills/   skills/            skills/    config/skills/              skills/
 //	standards/   ✓             ✓         ✓                  ✓          ✓                           ✓
 //	connectors/  ✓             ✓         ✓                  ✓          ✓                           ✓
 //	hooks/       settings.json hooks.json hooks/*.json       —          config/hooks.json           —
@@ -226,8 +226,17 @@ var registry = map[string]Preset{
 		// OpenCode follows XDG: global config at $HOME/.config/opencode.
 		Target: ".config/opencode",
 		Rules: []*rules.Rule{
-			{From: entryPlus(), To: "AGENTS.md"},
-			{From: rules.FromSpec{"rules/*.md"}, To: "rules/{filename}"},
+			// OpenCode has no native rules/ dir — AGENTS.md is the instruction
+			// file (auto-loaded, walked cwd-up). Concatenate core + rules into
+			// it (matching project scope and the other AGENTS.md agents) rather
+			// than writing an inert rules/ tree OpenCode never reads. A store can
+			// still register individual files via opencode.json's `instructions`
+			// glob by hand. https://opencode.ai/docs/rules/
+			{
+				From:     entryPlus("rules/*.md"),
+				To:       "AGENTS.md",
+				Strategy: rules.StrategyConcatenate,
+			},
 			{
 				From:             rules.FromSpec{"skills/**/*"},
 				To:               "skills/{relpath}",
@@ -349,6 +358,11 @@ var registry = map[string]Preset{
 				To:       "GEMINI.md",
 				Strategy: rules.StrategyConcatenate,
 			},
+			// Antigravity gained Agent-Skills support; global skills load from
+			// ~/.gemini/config/skills/ across all Antigravity products (SKILL.md
+			// with the standard frontmatter, so no dialect adaptation). Path per
+			// Google Codelabs; verify on a live install (see ROADMAP).
+			{From: rules.FromSpec{"skills/**/*"}, To: "config/skills/{relpath}"},
 			{From: rules.FromSpec{"commands/*.md"}, To: "antigravity/global_workflows/{filename}"},
 			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
 			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
