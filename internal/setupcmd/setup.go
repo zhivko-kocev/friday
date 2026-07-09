@@ -195,22 +195,42 @@ func Run(prompt io.Reader, cwd string, opts Options, onConflict engine.ConflictR
 		return nil, fmt.Errorf("store at %s has nothing to apply — add core.md, rules/, skills/, ...", storeDir)
 	}
 
-	states := itemStates(preset, agent, items, storeDir, cwd)
+	states := ItemStates(preset, agent, items, storeDir, cwd)
 	selected, err := selectItems(reader, items, states, tui)
 	if err != nil {
 		return nil, err
 	}
 
-	ad, only, skipped := FilterAdapter(preset, selected)
+	cfg, only, skipped, err := Resolve(agent, selected, storeDir, cwd)
+	// Surface unmapped items BEFORE pushing, so these notices precede any
+	// interactive conflict prompts and the writes themselves.
 	for _, it := range skipped {
 		output.Skip("%s/%s — %s has no project mapping for it", it.Category, it.Name, agent)
 	}
-	if ad == nil {
-		return nil, fmt.Errorf("nothing selected maps to %s at project scope", agent)
+	if err != nil {
+		return nil, err
 	}
-
-	cfg := projectConfig(agent, ad, storeDir, cwd)
 	return engine.Push(cfg, engine.Options{DryRun: opts.DryRun, Force: opts.Force, OnConflict: onConflict, Only: only})
+}
+
+// Resolve narrows the preset to the selected items and builds the project-scoped
+// config the caller then pushes into. It is the non-pushing core shared by Run
+// and the control room: it returns the `only` globs and the items no rule mapped
+// (skipped) so the caller controls conflict resolution AND the order in which it
+// reports skips relative to the push. Does not touch disk.
+func Resolve(agent string, selected []Item, storeDir, cwd string) (cfg *config.Config, only []string, skipped []Item, err error) {
+	preset, ok := presets.Get(agent)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("unknown agent %q (available: %s)", agent, strings.Join(presets.Names(), ", "))
+	}
+	if len(preset.ProjectRules) == 0 {
+		return nil, nil, nil, fmt.Errorf("preset %q has no project-scope mapping", agent)
+	}
+	ad, only, skipped := FilterAdapter(preset, selected)
+	if ad == nil {
+		return nil, nil, skipped, fmt.Errorf("nothing selected maps to %s at project scope", agent)
+	}
+	return projectConfig(agent, ad, storeDir, cwd), only, skipped, nil
 }
 
 // projectConfig builds an in-memory config whose relative targets resolve to
@@ -283,9 +303,41 @@ func promoteGlobs(filters []string) []string {
 	return out
 }
 
-// itemStates dry-runs the full project adapter and labels each item by what
-// already sits at its destinations, so a re-run shows what's applied.
-func itemStates(p presets.Preset, agent string, items []Item, storeDir, cwd string) map[int]string {
+// Suggestion is the display label and suggested-checked state for one catalog
+// item. Both selection UIs — the text/huh path and the control room — build
+// their rows from this, so the presented labels and pre-checked baseline can't
+// diverge between them.
+type Suggestion struct {
+	Label   string
+	Checked bool
+}
+
+// Suggestions derives per-item labels and the suggested selection from each
+// item's applied/differs state. On a fresh project (no states) it pre-checks the
+// universal baseline — core + rules — leaving skills/agents opt-in; on a re-run
+// it pre-checks whatever is already applied.
+func Suggestions(items []Item, states map[int]string) []Suggestion {
+	fresh := len(states) == 0
+	out := make([]Suggestion, len(items))
+	for i, it := range items {
+		label := it.Category + " / " + it.Name
+		switch states[i] {
+		case "in-sync":
+			label += "  (applied)"
+		case "differs":
+			label += "  (differs)"
+		}
+		baseline := it.Category == "core" || it.Category == "rules"
+		out[i] = Suggestion{Label: label, Checked: states[i] != "" || (fresh && baseline)}
+	}
+	return out
+}
+
+// ItemStates dry-runs the full project adapter and labels each item by what
+// already sits at its destinations, so a re-run shows what's applied. Exported
+// for the control room, which builds its own checklist and needs the same
+// applied/differs labels and pre-check baseline the text/huh paths use.
+func ItemStates(p presets.Preset, agent string, items []Item, storeDir, cwd string) map[int]string {
 	states := make(map[int]string, len(items))
 	changes, err := engine.Push(projectConfig(agent, p.ProjectAdapter(), storeDir, cwd), engine.Options{DryRun: true})
 	if err != nil {
@@ -340,25 +392,10 @@ func selectItems(reader *bufio.Reader, items []Item, states map[int]string, tui 
 	if !tui {
 		return chooseItems(reader, items, states)
 	}
-	// On a fresh project (nothing applied yet) suggest the universal baseline —
-	// core + rules — pre-checked; skills/agents stay opt-in. On a re-run, only
-	// what's already in the project is pre-checked.
-	fresh := len(states) == 0
+	sugg := Suggestions(items, states)
 	choices := make([]ui.Choice, len(items))
-	for i, it := range items {
-		label := it.Category + " / " + it.Name
-		switch states[i] {
-		case "in-sync":
-			label += "  (applied)"
-		case "differs":
-			label += "  (differs)"
-		}
-		baseline := it.Category == "core" || it.Category == "rules"
-		choices[i] = ui.Choice{
-			Value: strconv.Itoa(i),
-			Label: label,
-			On:    states[i] != "" || (fresh && baseline),
-		}
+	for i := range items {
+		choices[i] = ui.Choice{Value: strconv.Itoa(i), Label: sugg[i].Label, On: sugg[i].Checked}
 	}
 	vals, err := ui.MultiSelect("Select what to apply to this project", choices)
 	if err != nil {

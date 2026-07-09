@@ -29,9 +29,9 @@ func Run(prompt io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if exists, err := dirNonEmpty(storeDir); err != nil {
+	if initable, err := NeedsInit(storeDir); err != nil {
 		return err
-	} else if exists {
+	} else if !initable {
 		return fmt.Errorf("%s already exists — remove it yourself to re-init", storeDir)
 	}
 
@@ -67,24 +67,60 @@ func readRemoteURL(in io.Reader) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
-func cloneInto(storeDir, url string) error {
+// prepClone runs the pre-flight checks and makes the parent dir. Pure — shared
+// by the CLI's cloneInto (which keeps them before its spinner, so the plain-path
+// error output is unchanged) and the Clone seam.
+func prepClone(storeDir, url string) error {
 	if !git.Available() {
 		return errors.New("git not found in PATH")
 	}
 	if err := git.ValidateURL(url); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(storeDir), 0o755); err != nil {
+	return os.MkdirAll(filepath.Dir(storeDir), 0o755)
+}
+
+// Clone fetches url into storeDir. Pure — no printing or spinner; the caller
+// owns progress UI. It returns a non-fatal advisory (empty when all is well) so
+// the control room can surface the same "no friday.yaml → presets" notice
+// cloneInto prints, rather than silently dropping it. cloneInto wraps it with
+// the CLI spinner + summary; the control room runs it inside its own tea.Cmd.
+func Clone(storeDir, url string) (presetAdvisory string, err error) {
+	if err := prepClone(storeDir, url); err != nil {
+		return "", err
+	}
+	if err := git.Clone(url, storeDir); err != nil {
+		return "", err
+	}
+	return presetFallbackAdvisory(storeDir)
+}
+
+// presetFallbackAdvisory returns the "repo has no friday.yaml — push will use
+// built-in presets" notice when a freshly-cloned store carries no manifest
+// (empty when it does). Shared so the CLI and the control room word it the same.
+func presetFallbackAdvisory(storeDir string) (string, error) {
+	if _, err := os.Stat(filepath.Join(storeDir, config.ManifestName)); err != nil {
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		return fmt.Sprintf("repo has no %s — push will use built-in presets", config.ManifestName), nil
+	}
+	return "", nil
+}
+
+func cloneInto(storeDir, url string) error {
+	if err := prepClone(storeDir, url); err != nil {
 		return err
 	}
 	if err := ui.WithSpinner("cloning "+url, func() error { return git.Clone(url, storeDir) }); err != nil {
 		return err
 	}
-	if _, err := os.Stat(filepath.Join(storeDir, config.ManifestName)); err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
-		output.Dim("repo has no %s — push will use built-in presets", config.ManifestName)
+	advisory, err := presetFallbackAdvisory(storeDir)
+	if err != nil {
+		return err
+	}
+	if advisory != "" {
+		output.Dim("%s", advisory)
 	}
 	output.OK("user store ready at %s", storeDir)
 	return nil
@@ -114,9 +150,31 @@ func scaffoldEmpty(storeDir string) error {
 	return nil
 }
 
-// writeDefaultManifest persists every built-in preset into friday.yaml so
-// the scaffold is push-ready without an extra `friday add` step.
-func writeDefaultManifest(storeDir string) error {
+// Scaffold writes the empty-store skeleton, seeds friday.yaml with every preset,
+// and best-effort `git init`s. Pure — no printing; the caller owns progress UI.
+// It returns a non-fatal git advisory (empty when all is well) so the control
+// room can surface the same "no git" / "git init failed" notice scaffoldEmpty
+// prints, rather than silently producing a non-repo store. Safe on an
+// existing-empty dir (MkdirAll + writeIfMissing are idempotent).
+func Scaffold(storeDir string) (gitAdvisory string, err error) {
+	if err := scaffoldStore(storeDir); err != nil {
+		return "", err
+	}
+	if _, err := writeManifest(storeDir); err != nil {
+		return "", err
+	}
+	if !git.Available() {
+		return "git not in PATH — skipped `git init`; `friday remote`/`share` need a git repo", nil
+	}
+	if err := git.Init(storeDir); err != nil {
+		return fmt.Sprintf("git init failed: %v — `friday remote`/`share` need a git repo", err), nil
+	}
+	return "", nil
+}
+
+// writeManifest persists every built-in preset into friday.yaml and returns how
+// many it wrote. Pure — no printing; shared by Scaffold and writeDefaultManifest.
+func writeManifest(storeDir string) (int, error) {
 	cfg := &config.Config{
 		Version:      1,
 		Adapters:     map[string]*config.Adapter{},
@@ -129,9 +187,19 @@ func writeDefaultManifest(storeDir string) error {
 		cfg.Adapters[name] = p.Adapter()
 	}
 	if err := cfg.Save(); err != nil {
+		return 0, err
+	}
+	return len(cfg.Adapters), nil
+}
+
+// writeDefaultManifest persists every built-in preset into friday.yaml so
+// the scaffold is push-ready without an extra `friday add` step.
+func writeDefaultManifest(storeDir string) error {
+	n, err := writeManifest(storeDir)
+	if err != nil {
 		return err
 	}
-	output.OK("wrote %s with %d presets", config.ManifestName, len(cfg.Adapters))
+	output.OK("wrote %s with %d presets", config.ManifestName, n)
 	return nil
 }
 
@@ -159,15 +227,19 @@ func scaffoldStore(storeAbs string) error {
 	return writeIfMissing(filepath.Join(storeAbs, ".gitignore"), placeholderGitignore)
 }
 
-func dirNonEmpty(path string) (bool, error) {
-	entries, err := os.ReadDir(path)
+// NeedsInit reports whether dir is init-able — absent or empty. It is the single
+// definition of "empty enough to scaffold or clone into", shared by `friday
+// init`'s overwrite guard and the control room's cold-start gate so the two
+// can't drift on what counts as an existing store.
+func NeedsInit(dir string) (bool, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, nil
+			return true, nil
 		}
 		return false, err
 	}
-	return len(entries) > 0, nil
+	return len(entries) == 0, nil
 }
 
 func writeIfMissing(path, content string) error {
