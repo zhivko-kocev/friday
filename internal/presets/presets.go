@@ -71,7 +71,7 @@ var storeReplace = map[string]string{pluginRootMarker: "~/.friday"}
 //
 //	store        claude        codex     copilot            opencode   antigravity                 pi
 //	core+rules   CLAUDE.md     AGENTS.md copilot-instr..md  AGENTS.md  GEMINI.md                   AGENTS.md
-//	agents/      agents/       —         agents/*.agent.md  agents/    —                           —
+//	agents/      agents/       *.toml    agents/*.agent.md  agents/    agent.json                  —
 //	commands/    commands/     prompts/  —                  commands/  antigravity/global_workfl.  prompts/
 //	skills/      skills/       skills/   skills/            skills/    config/skills/              skills/
 //	standards/   ✓             ✓         ✓                  ✓          ✓                           ✓
@@ -191,6 +191,16 @@ var registry = map[string]Preset{
 				Strategy: rules.StrategyConcatenate,
 			},
 			{From: rules.FromSpec{"skills/**/*"}, To: "skills/{relpath}"},
+			// Codex subagents are TOML at ~/.codex/agents/<name>.toml
+			// (name/description/developer_instructions). Render the Claude-shaped
+			// agents/*.md into that shape (push-only — other frontmatter is
+			// dropped). Schema per Codex docs; verify on a live install (ROADMAP).
+			// https://learn.chatgpt.com/docs/agent-configuration/subagents
+			{
+				From:     rules.FromSpec{"agents/*.md"},
+				To:       "agents/{stem}.toml",
+				Strategy: rules.StrategyMDToTOML,
+			},
 			{From: rules.FromSpec{"commands/*.md"}, To: "prompts/{filename}"},
 			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
 			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
@@ -363,6 +373,17 @@ var registry = map[string]Preset{
 			// with the standard frontmatter, so no dialect adaptation). Path per
 			// Google Codelabs; verify on a live install (see ROADMAP).
 			{From: rules.FromSpec{"skills/**/*"}, To: "config/skills/{relpath}"},
+			// Antigravity subagents (LOW CONFIDENCE — its docs are an unreadable
+			// SPA). The CLI format the audit found is
+			// ~/.gemini/antigravity-cli/agents/<name>/agent.json; render
+			// agents/*.md into that JSON (push-only). Verify BOTH the path and
+			// the agent.json field names on a live install before relying on it
+			// (see ROADMAP; the body currently lands under "prompt" as a guess).
+			{
+				From:     rules.FromSpec{"agents/*.md"},
+				To:       "antigravity-cli/agents/{stem}/agent.json",
+				Strategy: rules.StrategyMDToJSON,
+			},
 			{From: rules.FromSpec{"commands/*.md"}, To: "antigravity/global_workflows/{filename}"},
 			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
 			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
