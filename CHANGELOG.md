@@ -2,6 +2,31 @@
 
 All notable changes to friday are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-07-09
+
+**The control room.** Running bare `friday` on a real terminal now opens a full-screen interactive TUI — pick and drive the everyday commands without remembering flags. It's a new frontend over the same engine and verbs: no new commands, no daemon, nothing running in the background. The moment you pass a flag or subcommand, or pipe/redirect the output, you get the exact one-shot CLI you had before — byte-for-byte, same exit codes.
+
+### Added
+- **Interactive control room** — bare `friday` on a real terminal launches a full-screen TUI built on the Charm stack (bubbletea / bubbles / lipgloss). The menu is the maintain-loop — **sync, setup, status, share, discover** — with `init` handled by cold-start:
+  - **Cold start.** On a fresh machine (no `~/.friday` yet) the control room opens on a single prompt: paste a store repo to clone, or leave it blank to scaffold a fresh store — a UI over `friday init`. A failed clone or scaffold is cleaned up so a retry starts fresh.
+  - **Sync.** Choose which installed agents to sync from a checklist, preview the capture + fan-out plan, then apply. Local edits are captured (pull) before the store fans out (push), grouped by direction in the preview.
+  - **Setup.** Pick an agent, then a checklist of store knowledge (core + rules pre-checked on a fresh project, whatever is already applied on a re-run), preview, and apply into the project's own config.
+  - **Status.** The pending-render plan — the store-side changes `sync`/`push` would apply — in a scrollable view, where a hand-edited target shows up as a conflict row. (The CLI's `friday status` additionally breaks out a separate local-drift column and install-state.)
+  - **Share.** Propose your store changes for team review — enter a message, confirm the push to your remote, and friday opens the MR. It always confirms first (the one outward-facing action) and only appears when the store is git-backed.
+  - **Discover.** Scan installed agents for files not yet in your store and multiselect which to import — a UI over `pull --discover`; each pick is scoped to its own agent.
+  - **Interactive conflict resolution.** When an apply would clobber a hand edit, a modal shows the diff and offers keep / take / skip — for both push and pull. Ctrl-C cancels an in-flight apply: the engine stops before the next file and unwinds cleanly (writes are atomic, so nothing is ever half-written), then reports that it was cancelled.
+  - **UX.** Preview-before-apply on every write; a positive `✓ applied` confirmation; a `?` help overlay listing every key; consistent keybindings (esc = back, q = quit, ctrl+c = cancel/quit); `d` toggles per-file diffs on the changes screen (windowed); long lists scroll and narrow terminals truncate cleanly; animated progress on slow operations.
+
+### Changed
+- **Bare `friday` on a real terminal now launches the control room** instead of printing usage and exiting 1 — the headline change in this release. There is no opt-out flag; `friday help` and `friday -h` still print usage. Any piped, redirected, CI, or `--no-interactive` invocation keeps the exact plain-text output and exit codes it had before, byte-for-byte, and every flag and subcommand is unchanged.
+- **`friday status --origin` now lists each adapter's rule mappings** (`strategy: from → to`) in addition to where each adapter is defined — the per-adapter rule view that `friday list` used to provide.
+
+### Removed
+- **`friday list` (and its `ls` alias)** — redundant with `status` and `doctor`, which already show adapters, targets, and install state. Its one unique view (per-adapter rule mappings) moved into `friday status --origin`.
+
+### Dependencies
+- Added `github.com/charmbracelet/x/exp/teatest` (test-only) for golden-file tests of the TUI; this raised `golang.org/x/text` from 0.23 to 0.28.
+
 ## [0.3.2] — 2026-07-08
 
 An output & experience polish pass — no new capabilities, just making what's there friendlier to read and less surprising to use.

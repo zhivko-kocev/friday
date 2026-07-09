@@ -154,7 +154,6 @@ pattern. For `agents/*.md` it's `agents`; for `skills/**/*.md` it's
 
 ```
 friday init [flags]               prompt: blank → scaffold + git init; URL → git clone into ~/.friday
-friday list [adapters]            adapters in friday.yaml + whether each is installed on this machine
 friday push [adapters...]         write ~/.friday into installed agent dirs (no args = every installed)
 friday pull [adapters...]         no args = per-agent diff + apply prompt; with args = legacy file-level
 friday status [adapters...]       diff store vs targets (no writes)

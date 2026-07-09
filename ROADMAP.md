@@ -2,6 +2,11 @@
 
 A non-binding view of where friday is headed. Anything here is fair game for a contributor PR — open an issue first if it's a big one.
 
+## Landed (v0.5.0)
+
+- [x] **Interactive control room.** Bare `friday` on a real terminal opens a full-screen TUI (Charm stack) over the existing engine and verbs — a new frontend, not new commands, and never a resident process. The menu is the maintain-loop — **sync, setup, status, share, discover** — with cold-start (clone or scaffold a fresh `~/.friday`) on first run. Sync captures + fans out with a per-agent checklist; setup applies a knowledge checklist to a project; status shows the pending-render plan (drift surfaces as a conflict row); share proposes to the team (confirm-first, git-backed only); discover imports target-only files. Conflicts resolve in a diff modal (keep / take / skip, push and pull), and Ctrl-C halts an apply cleanly (atomic writes → never half-written). A `?` help overlay, consistent keys, an opt-in `d` diff toggle, and windowed lists round out the UX. Any flag/subcommand — and any piped / CI / `--no-interactive` run — keeps the exact one-shot, plain-text CLI, byte-for-byte. See [CHANGELOG.md](CHANGELOG.md).
+- [x] **Leaner command surface.** Cut `friday list`/`ls` (redundant with `status`/`doctor`; its per-adapter rule view moved to `status --origin`). The porcelain tier is now `init`, `setup`, `sync`, `status`, `share`.
+
 ## Landed (shipped through v0.2.1)
 
 The developer-os integration and the bulk of the former roadmap — all of the
@@ -40,7 +45,7 @@ item landed in (v0.1.0–v0.2.1).
 ## Later
 
 - [ ] **More presets** as agents grow documented filesystem config paths (Cursor, Continue, Aider, Zed — see presets.go for why each is currently absent).
-- [ ] **Merge editor integration** — `$EDITOR` on dirty merges as an alternative to conflict markers.
+- [ ] **Merge editor integration** — `$EDITOR` on dirty merges as an alternative to conflict markers. This is also the control room's path to a merge option: its conflict modal ships with keep / take / skip, and `$EDITOR`-on-a-temp-file (via bubbletea's process suspend) is how it will gain merge without nesting a second prompt program.
 - [ ] **Opt-in hooks wiring** — a confirm-first command that merges a store's `hooks/hooks.json` entries into `~/.claude/settings.json` after showing the exact commands. Never automatic: hooks execute arbitrary shell, and friday's job is syncing cloned repos — auto-registering their commands would be a supply-chain hazard.
 
 ## Later — orchestration (one-shot)
@@ -82,6 +87,7 @@ contributors don't sink effort into a direction the project isn't ready for:
   observe agents as they work is out of scope.
 - **No proprietary file format.** Markdown in, Markdown out.
 - **No hosted service.** Distribution is git, period.
+- **No online catalogs.** Browsing or pulling skills/agents from a remote index beyond your own git store crosses the "distribution is git" line and implies a service to host and curate the index. The one-shot-shaped version that could land instead: git-sourced community rule packs added as an ordinary store remote and pulled through the existing engine — no new network surface, no catalog service.
 - **No editor extensions.** Editors should call `friday` themselves if they want integration.
 - **No project-scope `.friday` stores.** `friday setup` writes into the project's own agent config, which the project's git already versions.
 - **No encrypted blobs.** Secrets don't belong in an agent-knowledge repo at all — they live in env vars or a real secret manager; the store is meant to be shared and grep-able. Building crypto into friday would add a `x/crypto` dependency and a passphrase UX to protect content that shouldn't exist in the first place.

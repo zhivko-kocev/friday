@@ -169,7 +169,7 @@ Underneath (`friday help --all`): `push` / `pull` (one-way sync; `pull --discove
 seeds the store from an existing install), `promote` (project → store), `doctor`
 (health check + a best-practice advisor over your store; `doctor <file>` explains
 which rule produces a file; `doctor --json` for CI), `remote` (git bridge for the
-store), `rollback`/`undo`, `list`, `eject`, `completion`.
+store), `rollback`/`undo`, `eject`, `completion`.
 
 Run `friday <command> --help` for a command's flags.
 

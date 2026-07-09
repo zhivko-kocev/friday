@@ -11,7 +11,7 @@ the [README](../README.md); this document is the deep end.
 
 - [Core concepts](#core-concepts) — read this first
 - [The everyday five](#the-everyday-five)
-  - [`init`](#init--create-or-clone-your-store) · [`sync`](#sync--the-daily-driver) · [`status`](#status--what-would-change-the-two-axis-grid) · [`setup`](#setup--put-knowledge-into-a-project) · [`share`](#share--propose-changes-to-your-team) · [`list`](#list--see-configured-agents)
+  - [`init`](#init--create-or-clone-your-store) · [`sync`](#sync--the-daily-driver) · [`status`](#status--what-would-change-the-two-axis-grid) · [`setup`](#setup--put-knowledge-into-a-project) · [`share`](#share--propose-changes-to-your-team)
 - [Advanced commands](#advanced-commands)
   - [`push`](#push--one-way-store--agents) · [`pull`](#pull--one-way-agents--store) · [`promote`](#promote--project-config-back-into-the-store) · [`rollback`](#rollback--undo-a-write) · [`remote`](#remote--the-git-bridge) · [`doctor`](#doctor--health-check--best-practice-advisor) · [`eject`](#eject--stop-managing-an-agent) · [`completion`](#completion--shell-tab-completion) · [`version`](#version) · [`help`](#help)
 - [End-to-end workflows](#end-to-end-workflows)
@@ -264,12 +264,14 @@ friday share -m "add release skill" --branch friday/release-skill --target main
 
 ---
 
-### `list` — see configured agents
+### seeing configured agents
 
-**Purpose:** list every configured adapter and where it installs.
+There is no separate `list` command — `status` and `doctor` already show every
+configured adapter, its target, and whether it's installed. For the full
+per-adapter rule mappings (`strategy: from → to`), use:
 
 ```bash
-friday list      # or: friday ls
+friday status --origin
 ```
 
 ---
