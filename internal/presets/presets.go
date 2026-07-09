@@ -76,7 +76,7 @@ var storeReplace = map[string]string{pluginRootMarker: "~/.friday"}
 //	skills/      skills/       skills/   skills/            skills/    —                           skills/
 //	standards/   ✓             ✓         ✓                  ✓          ✓                           ✓
 //	connectors/  ✓             ✓         ✓                  ✓          ✓                           ✓
-//	hooks/       settings.json hooks.json —                 —          —                           —
+//	hooks/       settings.json hooks.json hooks/*.json       —          config/hooks.json           —
 //
 // standards/ and connectors/ have no native discovery mechanism anywhere, so
 // they land as reference copies in each agent's config home; the live copies
@@ -300,6 +300,20 @@ var registry = map[string]Preset{
 			},
 			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
 			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
+			// Copilot CLI loads every ~/.copilot/hooks/*.json alphabetically,
+			// so friday writes its own dedicated file (no co-ownership). Copilot
+			// denies differently from Claude/Codex: a `preToolUse` hook returns
+			// {"permissionDecision":"deny",...} on stdout and exits 0 (a non-zero
+			// exit there is only a warning), so the shared guard runs in
+			// copilot-json mode. NOTE: the tool matcher ("bash") follows Copilot's
+			// docs; verify on a live install (see ROADMAP).
+			// https://docs.github.com/en/copilot/reference/hooks-reference
+			{
+				From:     rules.FromSpec{"hooks/copilot/hooks.json"},
+				To:       "hooks/friday-git-guard.json",
+				Strategy: rules.StrategyMergeJSON,
+				Replace:  map[string]string{pluginRootMarker: "$HOME/.friday"},
+			},
 		},
 		// Project scope: .github/copilot-instructions.md, .github/skills/,
 		// and repo-level custom agents in .github/agents/*.agent.md.
@@ -338,6 +352,21 @@ var registry = map[string]Preset{
 			{From: rules.FromSpec{"commands/*.md"}, To: "antigravity/global_workflows/{filename}"},
 			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
 			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
+			// Antigravity reads global hooks from ~/.gemini/config/hooks.json.
+			// Its wrapper is a user-named group → event → matcher+hooks[], and it
+			// denies via {"decision":"deny","reason":...} on stdout with exit 0
+			// (NOT exit 2), so the shared guard runs in antigravity-json mode.
+			// LOW CONFIDENCE: Antigravity's docs are a client-rendered SPA, so this
+			// dialect (paths, the `decision` field, and especially the
+			// absolute-path command requirement vs. $HOME shell-expansion) is
+			// corroborated only from secondary sources — verify on a live install
+			// before relying on it (see ROADMAP).
+			{
+				From:     rules.FromSpec{"hooks/antigravity/hooks.json"},
+				To:       "config/hooks.json",
+				Strategy: rules.StrategyMergeJSON,
+				Replace:  map[string]string{pluginRootMarker: "$HOME/.friday"},
+			},
 		},
 		ProjectTarget: ".",
 		ProjectRules: []*rules.Rule{

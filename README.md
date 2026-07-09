@@ -133,7 +133,7 @@ it (paths verified against each harness's docs):
 | `skills/`     | `skills/`   | `skills/`  | `skills/`          | `skills/`†  | —                       | `skills/`  |
 | `standards/`  | ✓           | ✓          | ✓                  | ✓           | ✓                       | ✓          |
 | `connectors/` | ✓           | ✓          | ✓                  | ✓           | ✓                       | ✓          |
-| `hooks/`      | `settings.json`‡ | `hooks.json`§ | —          | —           | —                       | —          |
+| `hooks/`      | `settings.json`‡ | `hooks.json`§ | `hooks/*.json`§ | —      | `config/hooks.json`§    | —          |
 
 † frontmatter adapted to the harness's dialect. `—` means friday maps nothing
 there **yet** — not that the agent lacks the surface. Since this table was first

@@ -5,6 +5,37 @@ import (
 	"testing"
 )
 
+func TestHookCommandsAcrossDialects(t *testing.T) {
+	// Claude/Codex/Antigravity carry the command in "command"; Copilot uses a
+	// per-shell "bash" field. HookCommands must surface all of them so the
+	// confirm prompt never degrades to a byte count for a real hook.
+	cases := map[string]struct {
+		src  string
+		want string
+	}{
+		"claude/codex command key": {
+			`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"guard.sh"}]}]}}`,
+			"guard.sh",
+		},
+		"copilot bash field": {
+			`{"version":1,"hooks":{"preToolUse":[{"type":"command","matcher":"bash","bash":"bash cop.sh --deny-mode copilot-json"}]}}`,
+			"bash cop.sh --deny-mode copilot-json",
+		},
+		"antigravity named group": {
+			`{"friday-git-guard":{"PreToolUse":[{"matcher":"run_command","hooks":[{"type":"command","command":"ag.sh"}]}]}}`,
+			"ag.sh",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := HookCommands([]byte(tc.src))
+			if len(got) != 1 || got[0] != tc.want {
+				t.Errorf("HookCommands = %v, want [%q]", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCanonicalizeSortsKeysRecursively(t *testing.T) {
 	in := []byte(`{"b":1,"a":{"z":2,"y":3}}`)
 	got, err := canonicalize(in)
