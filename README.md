@@ -18,6 +18,8 @@ Every AI coding agent wants its config in a different folder, in a different for
 
 Plain Markdown in, each agent's native format out — versioned by any git repo you point it at. `friday help` shows those five; `friday help --all` shows the full toolbox underneath.
 
+Run bare `friday` on a real terminal and it opens an interactive **control room** — a full-screen TUI that drives those same commands (pick, preview, apply) without memorizing flags. It's a frontend over the same engine, not new commands: pass any flag or subcommand, or pipe/redirect the output (or `--no-interactive`), and you get the exact one-shot, plain-text CLI, byte-for-byte.
+
 ```text
 $ friday push
   pushing to installed agents: [claude codex copilot opencode]
@@ -115,7 +117,7 @@ commands/*.md        Claude slash commands
 skills/<name>/       Agent skills (Claude + OpenCode)
 standards/*.md       Per-language baselines — stay in the store, reached by reference
 hooks/**             Hook config + scripts — stay in the store (see `friday doctor`)
-friday.yaml          Adapter manifest. Auto-seeded by `friday init` with all four presets.
+friday.yaml          Adapter manifest. Auto-seeded by `friday init` with all built-in presets.
 ```
 
 ## Built-in presets

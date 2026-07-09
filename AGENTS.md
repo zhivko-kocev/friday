@@ -1,10 +1,16 @@
 # friday
 
-One CLI to manage AI agent configs (Claude Code, OpenAI Codex, OpenCode, GitHub
-Copilot) from a single canonical store. Push to every agent, pull edits back,
-sync across machines via git. Store: `~/.friday/`. Default agent targets:
-`~/.claude`, `~/.codex`, `~/.config/opencode`, `~/.copilot` (all configurable
-via `friday.yaml`).
+One CLI to manage AI agent configs from a single canonical store. Push to every
+agent, pull edits back, sync across machines via git. Store: `~/.friday/`. Seven
+built-in presets, with default agent targets: `claude` (`~/.claude`), `codex`
+(`~/.codex`), `copilot` (`~/.copilot`), `opencode` (`~/.config/opencode`),
+`windsurf` (`~/.codeium/windsurf`), `antigravity` (`~/.gemini`), and `pi`
+(`~/.pi/agent`) — all configurable via `friday.yaml`.
+
+Bare `friday` on a real terminal opens a full-screen interactive control room
+(TUI) over the same engine and verbs — a frontend, not new commands. Any
+flag/subcommand, or any piped / CI / `--no-interactive` run, keeps the exact
+byte-identical plain-text CLI.
 
 Cursor is intentionally not a built-in preset: its global rules are stored in
 Cursor's settings UI, not on the filesystem, so there's nothing for friday to
@@ -37,7 +43,7 @@ agents/*.md           agent definitions (claude only)
 commands/*.md         slash-commands (claude only)
 skills/<name>/*       skills (recursively mirrored)
 hooks/**/*            hook config + scripts (not copied — wire into settings.json by hand)
-friday.yaml           adapter manifest — auto-seeded with all four presets at init
+friday.yaml           adapter manifest — auto-seeded with all built-in presets (seven) at init
 .gitignore            scaffolded with secret + runtime-state patterns
 ```
 
@@ -66,11 +72,17 @@ internal/conflict/    interactive [k/t/d/s] prompt with line-LCS diff (LineDiff 
 internal/drift/       SHA256 store at $UserCacheDir/friday/state.json — flags external edits
 internal/frontmatter/ parse/strip YAML frontmatter in .md files (CRLF-tolerant)
 internal/git/         shells out to `git` for clone/pull/push/status
-internal/presets/     built-in adapter rule sets (claude/cursor/opencode/copilot)
+internal/presets/     built-in adapter rule sets (claude/codex/copilot/opencode/windsurf/antigravity/pi)
 internal/initcmd/     `friday init` — prompts for a URL, clones or scaffolds
+internal/setupcmd/    `friday setup` / `promote` — apply store knowledge into a project's own config
 internal/output/      all console output (colored, TTY-aware)
+internal/lint/        store checks + best-practice advisor (backs `friday doctor`)
+internal/snapshot/    content-addressed pre-write snapshots (backs `friday rollback`)
 internal/atomicio/    WriteFile via temp + fsync + rename — used for every file write
 internal/textnorm/    one home for CRLF→LF normalization (used by engine, drift, frontmatter)
+internal/ui/          TTY detection + huh-backed prompts (the plain-path interactive bits)
+internal/ui/theme/    the shared color theme
+internal/ui/tui/      the control room — the full-screen bubbletea TUI bare `friday` launches
 ```
 
 ## Key design rules
@@ -80,9 +92,11 @@ writes each adapter's rules into the agent's expected on-disk layout. `pull` is 
 inverse where supported. `remote push` ships the store via git — think of it like a
 package manager where your dotfiles are the package.
 
-**One engine, one scope.** `engine.Push` / `engine.Pull` operate on a
-`*config.Config` with a `TargetRoot` and `StoreDir`. Currently user-scope only
-(`$HOME`); project-scope is reserved for a future release.
+**One engine, one scope per run.** `engine.Push` / `engine.Pull` operate on a
+`*config.Config` with a `TargetRoot` and `StoreDir` — one scope per invocation.
+User scope (`$HOME`) is the default; project scope is live via `friday setup` /
+`promote`, which point the engine at a project dir and write into the project's
+own git-tracked config (presets carry `ProjectTarget` / `ProjectRules`).
 
 **Push targets installed agents only.** Bare `friday push` filters to
 adapters whose target dir already exists. Explicit `friday push <name>`
@@ -152,21 +166,27 @@ pattern. For `agents/*.md` it's `agents`; for `skills/**/*.md` it's
 
 ## CLI
 
+Porcelain — the everyday five (`friday help`):
+
 ```
-friday init [flags]               prompt: blank → scaffold + git init; URL → git clone into ~/.friday
-friday push [adapters...]         write ~/.friday into installed agent dirs (no args = every installed)
-friday pull [adapters...]         no args = per-agent diff + apply prompt; with args = legacy file-level
-friday status [adapters...]       diff store vs targets (no writes)
-friday doctor                     read-only health check (store, manifest, drift)
-friday remote pull                git pull in ~/.friday
-friday remote push -m "msg"       git add -A && commit && push (scaffolded .gitignore filters secrets)
-friday remote status              git status
+friday init                       clone or scaffold your ~/.friday store
+friday setup                      add friday knowledge to the current project
+friday sync                       capture local edits, then fan them to every agent
+friday status                     show what would change (no writes)
+friday share -m "msg"             propose your store changes for team review (opens an MR)
 ```
 
+Advanced (`friday help --all`): `push` (store → installed agents), `pull`
+(agent edits → store; `--discover` finds new files), `promote` (project config →
+store), `rollback`/`undo`, `eject`, `remote` (git ops on the store:
+`init`/`pull`/`push`/`propose`/`status`), `doctor` (health-check + store lint;
+`doctor <file>` explains a mapping), `completion`, `version`, `help`.
+
 `init` supports both interactive and non-interactive flows:
-`friday init --scaffold` (empty scaffold) and `friday init --remote URL` (clone).
-Stdin-piping still works (`echo "URL" | friday init`) for tooling that prefers it.
-Refuses to overwrite a non-empty `~/.friday` — remove it yourself to re-init.
+`friday init --scaffold` (empty scaffold) and `friday init --from-git URL`
+(clone; `--remote` is a soft-deprecated alias). Stdin-piping still works
+(`echo "URL" | friday init`) for tooling that prefers it. Refuses to overwrite a
+non-empty `~/.friday` — remove it yourself to re-init.
 
 `push` exits `2` if any change is `ActionConflict` (drift detected in CI, etc.).
 
@@ -180,9 +200,9 @@ Refuses to overwrite a non-empty `~/.friday` — remove it yourself to re-init.
 ## Limitations
 
 - Concatenate rules and `frontmatter_strip` rules are not reversible (no pull).
-- Pull only walks files that already exist in the store. New files added
-  directly to a target dir are not auto-discovered — copy them into the
-  store first, then pull keeps them in sync.
+- A plain `pull` only walks files the store already knows about. A file created
+  directly in a target dir is caught by `friday pull --discover`, which walks the
+  whole agent dir and captures new files into the store.
 - `friday remote push` requires `git remote add origin ...` to have been
   run inside the user store at some point.
 - No permissions translation across agents.

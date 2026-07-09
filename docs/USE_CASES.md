@@ -1,6 +1,6 @@
 # friday — use cases & command guide
 
-A task-oriented manual for `friday` v0.3.0. Every command is explained with what
+A task-oriented manual for `friday` v0.5.0. Every command is explained with what
 it does, when to reach for it, the full flow (including what happens under the
 hood), its flags, and worked examples. If you just want the elevator pitch, read
 the [README](../README.md); this document is the deep end.
@@ -72,11 +72,15 @@ Writes are **atomic** (temp file + rename), so Ctrl-C mid-write never leaves a
 half-written file. Line-ending differences (CRLF vs LF) are normalized, so a
 Windows checkout of LF-authored files isn't flagged as drift.
 
-**Interactive vs. non-interactive.** On a real terminal friday shows a rich TUI
-(pickers, an interactive conflict resolver, spinners). When stdout/stdin isn't a
-TTY — pipes, CI — or you pass `--no-interactive`/`--json`, output is plain and
-byte-stable, and conflicts are reported rather than prompted. Color obeys
-`NO_COLOR` / `FRIDAY_NO_COLOR` / `--no-color`.
+**Interactive vs. non-interactive.** On a real terminal, running bare `friday`
+(no arguments) opens the full-screen **control room** — a menu-driven TUI over
+`sync` / `setup` / `status` / `share` / `discover`, with cold-start for `init` on
+a fresh machine — that previews every change before applying and resolves
+conflicts in a diff modal (keep / take / skip). Individual commands show rich
+interactive bits too (pickers, a conflict resolver, spinners). When stdout/stdin
+isn't a TTY — pipes, CI — or you pass `--no-interactive`/`--json`, output is plain
+and byte-stable, conflicts are reported rather than prompted, and the control
+room never opens. Color obeys `NO_COLOR` / `FRIDAY_NO_COLOR` / `--no-color`.
 
 **The two-axis status model.** `friday status` shows each managed file on two
 independent axes (borrowed from chezmoi):
@@ -188,7 +192,7 @@ changes:
 | Flag | Meaning |
 |------|---------|
 | `--diff` | Also print the content diff for each pending render. |
-| `--origin` | Also show where each adapter is defined (friday.yaml / built-in). |
+| `--origin` | Also show where each adapter is defined (friday.yaml / built-in), plus each adapter's rule mappings (`strategy: from → to`). |
 | `--check` | CI: exit 2 if anything is out of sync, 0 when clean. |
 | `--json` | Machine-readable; exit 2 on conflict (body/exit unchanged across versions). |
 

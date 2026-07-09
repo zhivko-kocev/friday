@@ -35,7 +35,10 @@ make lint              # go vet ./...
 make tidy              # go mod tidy
 ```
 
-Go 1.22 is the minimum. The only direct runtime dependency is `gopkg.in/yaml.v3`.
+Go 1.24 is the minimum. Runtime dependencies are `gopkg.in/yaml.v3` and the Charm
+TUI stack (bubbletea / bubbles / huh / lipgloss / x/ansi) that powers the control
+room; see `go.mod` for the full list. Running the race detector needs cgo (a C
+compiler on PATH): `CGO_ENABLED=1 go test -race ./...`.
 
 For end-to-end testing against your own machine, install into a scratch dir:
 

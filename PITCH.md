@@ -25,7 +25,7 @@ the right way.
 ## The pitch in 30 seconds
 
 ```bash
-friday init --remote git@github.com:me/ai-config.git
+friday init --from-git git@github.com:me/ai-config.git
 # edit ~/.friday/core.md, rules/*.md, skills/*/, ...
 friday push
 # writes ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.config/opencode/AGENTS.md, ~/.copilot/copilot-instructions.md
@@ -39,6 +39,10 @@ That's it. No proprietary format. No hosted service. No daemon.
 
 ## What you get
 
+- **An interactive control room.** Run bare `friday` on a real terminal and it
+  opens a full-screen TUI — pick a command, preview every change, resolve
+  conflicts in a diff modal, apply. Scripts and CI keep the exact one-shot,
+  plain-text CLI, byte-for-byte; the UI is a frontend, not new commands.
 - **One canonical store**, version-controlled in a git repo of your choice.
 - **Seven built-in presets** — Claude Code, Codex, OpenCode, GitHub Copilot,
   Windsurf, Antigravity, and pi. Add another in ~30 lines of Go.
@@ -75,10 +79,10 @@ your overrides alongside the content.
 ## Use cases
 
 **Solo developer with multiple machines.** Sync your AI tooling identity
-across laptops and desktops. `friday init --remote <url>` on a fresh machine.
+across laptops and desktops. `friday init --from-git <url>` on a fresh machine.
 
 **Team standards.** A team-config repo with shared rules, agent personas, and
-skills. Every developer points `friday init --remote` at the team repo.
+skills. Every developer points `friday init --from-git` at the team repo.
 Updates land everywhere with one push.
 
 **Onboarding new agents.** A new tool releases tomorrow. Add a 30-line preset
