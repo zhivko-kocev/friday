@@ -77,10 +77,16 @@ type Change struct {
 	// no whole-file drift baseline and never surfaces as a conflict. Set by
 	// planMergeJSON; honored in resolveConflict and apply.
 	driftExempt bool
-	// mergeSource is the store JSON being merged in (after replace), kept so a
-	// confirmer can describe a drift-exempt write (e.g. list the hook commands)
-	// before it lands. Set by planMergeJSON; never rendered by the report.
+	// mergeSource is the store content a confirmer describes before the write
+	// lands (the merge-json blob, or the executable hook plugin's body). Set by
+	// planMergeJSON and by planTokenized for confirm-gated copies; never rendered
+	// by the report.
 	mergeSource []byte
+	// confirmWrite gates a NON-drift-exempt write behind the confirmer the same
+	// way driftExempt does — used for a copy rule that drops an executable hook
+	// plugin (OpenCode/pi) which auto-activates the moment it lands, so it must
+	// not be written unattended. Set by planTokenized from Rule.ConfirmHook.
+	confirmWrite bool
 }
 
 // ConflictChoice is the engine-level outcome of a drift resolution prompt.
@@ -131,22 +137,27 @@ type ConflictInfo struct {
 // side. A nil resolver (non-interactive mode) surfaces drift as Conflict.
 type ConflictResolver func(ConflictInfo) Resolution
 
-// WriteConfirmInfo describes a drift-exempt co-owned write (merge-json) about to
-// land, so the caller can confirm before content that may execute arbitrary
-// shell — hook commands — is installed. Source is the store JSON being merged
-// in (after replace); the caller renders it to describe the write.
+// WriteConfirmInfo describes a hook write about to land, so the caller can
+// confirm before content that runs unattended is installed. Two shapes flow
+// through it: a co-owned merge (merge-json — Merge is true, Source is the store
+// JSON merged in, the target's other keys are kept) and a wholesale install of
+// an executable hook plugin (a copy — Merge is false, Source is the full file
+// body being written, which replaces any existing file). The caller renders
+// Source to describe the write.
 type WriteConfirmInfo struct {
 	Adapter  string
 	DestRel  string
 	DestPath string
 	Creating bool // the target does not exist yet
+	Merge    bool // co-owned merge-json write (vs. a wholesale plugin-file install)
 	Source   []byte
 }
 
-// ConfirmWriter approves a drift-exempt co-owned write. Returning false skips
-// it. A nil confirmer (non-interactive mode) skips every such write: friday
-// never silently installs hook commands, which is the safe default when a store
-// may be a clone of someone else's repo. --force bypasses the confirmer.
+// ConfirmWriter approves a hook write (a merge-json co-owned write or an
+// executable-hook-plugin install). Returning false skips it. A nil confirmer
+// (non-interactive mode) skips every such write: friday never silently installs
+// hook code, the safe default when a store may be a clone of someone else's
+// repo. --force bypasses the confirmer.
 type ConfirmWriter func(WriteConfirmInfo) bool
 
 // Options controls a single Push/Pull/Status invocation.
@@ -160,9 +171,9 @@ type Options struct {
 	// BaseLookup resolves a drift baseline hash to its content (snapshot
 	// blob store). Nil disables merge-base recovery.
 	BaseLookup func(hash string) ([]byte, bool)
-	// ConfirmWrite gates drift-exempt co-owned writes (merge-json hook wiring).
-	// Nil skips them — friday never installs hook commands unattended. Ignored
-	// under --force (Force) and on dry runs.
+	// ConfirmWrite gates hook writes — merge-json hook wiring and executable
+	// hook-plugin installs (confirm_hook copies). Nil skips them — friday never
+	// installs hook code unattended. Ignored under --force (Force) and dry runs.
 	ConfirmWrite ConfirmWriter
 	// Warnf, when non-nil, receives non-fatal advisories the engine would
 	// otherwise print through internal/output (currently only a drift-store

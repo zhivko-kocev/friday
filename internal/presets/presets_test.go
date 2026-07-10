@@ -57,9 +57,9 @@ func TestPresetCapabilityMatrix(t *testing.T) {
 		"claude":      {"rules/*.md", "agents/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md", "hooks/hooks.json"},
 		"codex":       {"rules/*.md", "agents/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md", "hooks/codex/hooks.json"},
 		"copilot":     {"rules/*.md", "agents/*.md", "skills/**/*", "standards/*.md", "connectors/*.md", "hooks/copilot/hooks.json"},
-		"opencode":    {"rules/*.md", "agents/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
+		"opencode":    {"rules/*.md", "agents/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md", "hooks/opencode/git-guard.ts"},
 		"antigravity": {"rules/*.md", "agents/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md", "hooks/antigravity/hooks.json"},
-		"pi":          {"rules/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md"},
+		"pi":          {"rules/*.md", "commands/*.md", "skills/**/*", "standards/*.md", "connectors/*.md", "hooks/pi/git-guard.ts"},
 	}
 	for name, patterns := range want {
 		p, ok := Get(name)

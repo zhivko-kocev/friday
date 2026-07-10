@@ -47,6 +47,10 @@ func TestNormalize(t *testing.T) {
 		{"merge-json rejects frontmatter_strip", Rule{From: FromSpec{"a.json"}, To: "settings.json", Strategy: StrategyMergeJSON, FrontmatterStrip: []string{"x"}}, true},
 		{"merge-json rejects separator", Rule{From: FromSpec{"a.json"}, To: "settings.json", Strategy: StrategyMergeJSON, Separator: "X"}, true},
 		{"merge-json rejects max_bytes", Rule{From: FromSpec{"a.json"}, To: "settings.json", Strategy: StrategyMergeJSON, MaxBytes: 10}, true},
+		{"md-to-toml ok", Rule{From: FromSpec{"agents/*.md"}, To: "agents/{stem}.toml", Strategy: StrategyMDToTOML}, false},
+		{"md-to-toml rejects frontmatter_strip", Rule{From: FromSpec{"agents/*.md"}, To: "x.toml", Strategy: StrategyMDToTOML, FrontmatterStrip: []string{"x"}}, true},
+		{"confirm_hook on copy ok", Rule{From: FromSpec{"h.ts"}, To: "plugins/h.ts", Strategy: StrategyCopy, ConfirmHook: true}, false},
+		{"confirm_hook on merge-json rejected", Rule{From: FromSpec{"a.json"}, To: "settings.json", Strategy: StrategyMergeJSON, ConfirmHook: true}, true},
 	}
 	for _, c := range cases {
 		err := c.r.Normalize()

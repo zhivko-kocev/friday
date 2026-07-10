@@ -76,24 +76,25 @@ var storeReplace = map[string]string{pluginRootMarker: "~/.friday"}
 //	skills/      skills/       skills/   skills/            skills/    config/skills/              skills/
 //	standards/   ✓             ✓         ✓                  ✓          ✓                           ✓
 //	connectors/  ✓             ✓         ✓                  ✓          ✓                           ✓
-//	hooks/       settings.json hooks.json hooks/*.json       —          config/hooks.json           —
+//	hooks/       settings.json hooks.json hooks/*.json       plugins/*.ts config/hooks.json          extensions/*.ts
 //
 // standards/ and connectors/ have no native discovery mechanism anywhere, so
 // they land as reference copies in each agent's config home; the live copies
 // referenced by skill bodies stay in ~/.friday.
 //
 // "—" means friday maps nothing there yet — NOT that the agent lacks the
-// surface. Since these were first written, Codex, Copilot, and Antigravity
-// have all gained file-based hook surfaces (and Codex/Antigravity skills and
-// subagents); those cells are being wired progressively — see ROADMAP. Only
-// OpenCode and pi hooks stay unmappable here, being imperative TS plugins
-// rather than a declarative file.
+// surface. Every agent now has a hook path: the four with a declarative hook
+// file (Claude settings.json, Codex/Antigravity hooks.json, Copilot
+// hooks/*.json) are wired by merge-json; OpenCode and pi expose hooks only as
+// imperative TS plugins/extensions, so friday drops a guard plugin that shells
+// out to the shared script (confirm-first, like the merge writes).
 //
-// hooks/ is not a plain reference copy: an agent activates only the hooks its
-// config declares (Claude Code, e.g., ignores a loose ~/.claude/hooks/hooks.json
-// and reads only settings.json), so the claude preset merges the store's
-// hooks.json into settings.json's `hooks` key (merge-json strategy) rather than
-// dropping an inert copy the user must wire up by hand.
+// hooks/ is never a plain reference copy. For the declarative agents an agent
+// activates only the hooks its config declares (Claude Code, e.g., ignores a
+// loose ~/.claude/hooks/hooks.json and reads only settings.json), so friday
+// merges the store's hooks into that config file (merge-json) rather than
+// dropping an inert copy. For OpenCode/pi the plugin file IS the activation, so
+// its copy is gated behind the same confirmer (confirm_hook).
 
 var registry = map[string]Preset{
 	"claude": {
@@ -269,6 +270,13 @@ var registry = map[string]Preset{
 			{From: rules.FromSpec{"commands/*.md"}, To: "commands/{filename}"},
 			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
 			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
+			// OpenCode has no declarative hook file — hooks are TS plugins that
+			// auto-load from plugins/ and block by throwing in tool.execute.before.
+			// Drop the store's guard plugin (it shells out to the shared
+			// git-guard.sh) there. confirm_hook gates the copy: the plugin runs
+			// the moment it lands, so friday never installs it unattended.
+			// https://opencode.ai/docs/plugins/
+			{From: rules.FromSpec{"hooks/opencode/git-guard.ts"}, To: "plugins/git-guard.ts", ConfirmHook: true},
 		},
 		// OpenCode reads AGENTS.md at the repo root and discovers project
 		// skills and agents under ./.opencode/. https://opencode.ai/docs/skills/
@@ -433,6 +441,13 @@ var registry = map[string]Preset{
 			{From: rules.FromSpec{"commands/*.md"}, To: "prompts/{filename}"},
 			{From: rules.FromSpec{"standards/*.md"}, To: "standards/{filename}"},
 			{From: rules.FromSpec{"connectors/*.md"}, To: "connectors/{filename}"},
+			// pi has no declarative hook file — hooks are TS extensions that
+			// auto-load from extensions/ and block by returning { block: true }
+			// from a tool_call handler. Drop the store's guard extension (it
+			// shells out to the shared git-guard.sh) there. confirm_hook gates
+			// the copy: it runs the moment it lands.
+			// https://pi.dev/docs/latest/extensions
+			{From: rules.FromSpec{"hooks/pi/git-guard.ts"}, To: "extensions/git-guard.ts", ConfirmHook: true},
 		},
 		// Project scope: root AGENTS.md (loaded cwd-up) + .pi/skills/ +
 		// .pi/prompts/.

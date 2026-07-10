@@ -42,32 +42,58 @@ func baseLookup() func(string) ([]byte, bool) {
 	return snapshot.BaseLookup()
 }
 
-// hookWriteConfirmer prompts before friday installs co-owned hook wiring
-// (merge-json) into a settings file. Those commands run arbitrary shell on tool
+// hookWriteConfirmer prompts before friday installs hook code: co-owned wiring
+// merged into a settings file (merge-json), or a wholesale executable hook
+// plugin (an OpenCode plugin / pi extension). Either runs unattended on tool
 // use, and a synced store may be someone else's repo, so the write is never
 // silent. Returned only when prompts are wanted; non-interactive callers pass
 // nil so the engine skips wiring rather than installing it unattended.
 func hookWriteConfirmer() engine.ConfirmWriter {
 	return func(info engine.WriteConfirmInfo) bool {
-		verb := "update the hooks in"
-		if info.Creating {
-			verb = "create"
-		}
-		output.Warn("%s wants to %s %s:", info.Adapter, verb, info.DestRel)
-		cmds := engine.HookCommands(info.Source)
-		if len(cmds) == 0 {
-			output.Dim("  (%d bytes of hook config)", len(info.Source))
-		} else {
-			for _, c := range cmds {
-				output.Dim("  %s", c)
+		verb := "install"
+		if info.Merge {
+			verb = "update the hooks in"
+			if info.Creating {
+				verb = "create"
 			}
 		}
-		output.Dim("  these run arbitrary shell on tool use")
-		if !info.Creating {
-			output.Dim("  merged into %s — your own hooks there are kept", info.DestRel)
+		output.Warn("%s wants to %s %s:", info.Adapter, verb, info.DestRel)
+		if info.Merge {
+			// merge-json: the source is a hooks JSON blob — show its commands.
+			cmds := engine.HookCommands(info.Source)
+			if len(cmds) == 0 {
+				output.Dim("  (%d bytes of hook config)", len(info.Source))
+			} else {
+				for _, c := range cmds {
+					output.Dim("  %s", c)
+				}
+			}
+			output.Dim("  these run arbitrary shell on tool use")
+			if !info.Creating {
+				output.Dim("  merged into %s — your own hooks there are kept", info.DestRel)
+			}
+		} else {
+			// A plugin install: the source IS the code — show it so consent is
+			// informed, and be clear it replaces any existing file.
+			for _, line := range hookBodyPreview(info.Source) {
+				output.Dim("  %s", line)
+			}
+			output.Dim("  this runs as a plugin on tool use; overwrites any existing %s", info.DestRel)
 		}
-		return confirmYesNo("install these hooks?")
+		return confirmYesNo("install this hook?")
 	}
+}
+
+// hookBodyPreview returns the hook plugin body as display lines, capped so a
+// long file doesn't flood the prompt.
+func hookBodyPreview(src []byte) []string {
+	const max = 40
+	lines := strings.Split(strings.TrimRight(string(src), "\n"), "\n")
+	if len(lines) <= max {
+		return lines
+	}
+	out := append(lines[:max:max], fmt.Sprintf("… (%d more lines)", len(lines)-max))
+	return out
 }
 
 // confirmYesNo asks a yes/no question, defaulting to no. It uses the rich TTY

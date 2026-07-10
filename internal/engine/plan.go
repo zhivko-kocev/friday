@@ -212,6 +212,13 @@ func planTokenized(adapterName string, r *rules.Rule, storeAbs, targetAbs string
 				NewContent: content,
 				Mode:       info.Mode().Perm(),
 			}
+			// An executable hook plugin auto-activates the moment it lands, so
+			// gate the write behind the confirmer (like merge-json hook wiring)
+			// and hand it the plugin body to describe.
+			if r.ConfirmHook {
+				ch.confirmWrite = true
+				ch.mergeSource = content
+			}
 			old, err := os.ReadFile(destAbs)
 			switch {
 			case os.IsNotExist(err):

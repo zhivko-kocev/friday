@@ -133,16 +133,14 @@ it (paths verified against each harness's docs):
 | `skills/`     | `skills/`   | `skills/`  | `skills/`          | `skills/`†  | `config/skills/`        | `skills/`  |
 | `standards/`  | ✓           | ✓          | ✓                  | ✓           | ✓                       | ✓          |
 | `connectors/` | ✓           | ✓          | ✓                  | ✓           | ✓                       | ✓          |
-| `hooks/`      | `settings.json`‡ | `hooks.json`§ | `hooks/*.json`§ | —      | `config/hooks.json`§    | —          |
+| `hooks/`      | `settings.json`‡ | `hooks.json`§ | `hooks/*.json`§ | `plugins/*.ts`§ | `config/hooks.json`§ | `extensions/*.ts`§ |
 
 † frontmatter adapted to the harness's dialect. `—` means friday maps nothing
 there **yet** — not that the agent lacks the surface. Since this table was first
 written, Codex, Copilot, and Antigravity have all gained file-based hook
-surfaces (and Codex/Antigravity native skills and subagents); those cells are
-being wired in progressively (see [ROADMAP](ROADMAP.md)). OpenCode and pi hooks
-stay `—` because they are imperative TypeScript plugins, not a declarative file.
-`standards/` and `connectors/` have no native discovery mechanism anywhere, so
-they land as reference copies in each agent's config home.
+surfaces (and Codex/Antigravity native skills and subagents). `standards/` and
+`connectors/` have no native discovery mechanism anywhere, so they land as
+reference copies in each agent's config home.
 
 ‡ Claude Code activates only the hooks declared in `settings.json`, so friday
 merges `hooks/hooks.json` into its `hooks` key rather than dropping an inert
@@ -153,13 +151,16 @@ unattended. Every rule rewrites the Claude-plugin path variable
 knowledge repos authored as Claude Code plugins — like developer-os — work
 unmodified, and cross-references always resolve against the store.
 
-§ Non-Claude hooks are wired the same confirm-first way, from per-agent
-`hooks/<agent>/hooks.json` sources in the store that all invoke one shared
-guard script — its deny signal is selected per agent (`exit 2` for Codex;
-stdout JSON for Copilot/Antigravity). These dialects follow each agent's
-current docs; confirm the guard actually blocks on your live install (the
-Antigravity dialect in particular is corroborated only from secondary
-sources) — see [ROADMAP](ROADMAP.md).
+§ Non-Claude hooks are wired the same confirm-first way, from per-agent sources
+in the store that all invoke one shared guard script. The four agents with a
+declarative hook file (Codex/Antigravity `hooks.json`, Copilot `hooks/*.json`)
+are merged in; its deny signal is selected per agent (`exit 2` for Codex;
+stdout JSON for Copilot/Antigravity). OpenCode and pi expose hooks only as
+imperative TS plugins/extensions, so friday drops a small guard that shells out
+to the shared script — the copy is confirm-gated because it auto-activates on
+landing. These dialects follow each agent's current docs; confirm the guard
+actually blocks on your live install (the Antigravity dialect in particular is
+corroborated only from secondary sources) — see [ROADMAP](ROADMAP.md).
 
 Paths verified against each agent's current documentation (Claude Code, [Codex CLI](https://developers.openai.com/codex/guides/agents-md), [OpenCode](https://opencode.ai/docs/config/), [Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions)).
 

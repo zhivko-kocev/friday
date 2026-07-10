@@ -45,6 +45,11 @@ type Rule struct {
 	// friday still writes the file — the agent's truncation behavior is its
 	// own — but every push and status report carries the warning. 0 = no limit.
 	MaxBytes int `yaml:"max_bytes,omitempty"`
+	// ConfirmHook marks a copy rule that installs an executable hook that the
+	// agent auto-activates the moment the file lands (an OpenCode plugin, a pi
+	// extension). Such a write is confirmed first, exactly like merge-json hook
+	// wiring — never installed unattended from a possibly-cloned store.
+	ConfirmHook bool `yaml:"confirm_hook,omitempty"`
 }
 
 // FromSpec accepts either a single string or a list of strings in YAML.
@@ -134,6 +139,9 @@ func (r *Rule) Normalize() error {
 	}
 	if r.MaxBytes < 0 {
 		return fmt.Errorf("max_bytes cannot be negative")
+	}
+	if r.ConfirmHook && r.Strategy != StrategyCopy {
+		return fmt.Errorf("confirm_hook is only valid on a copy rule")
 	}
 	// Replace must stay invertible: pull maps values back to keys, so every
 	// value must round-trip to exactly one key and neither side may be empty.

@@ -336,13 +336,14 @@ func prepareMergeWriteBack(ch *Change, r *rules.Rule) {
 	ch.Warning = "merge written to the target only — fold it into the store or the next push will flag this file again"
 }
 
-// confirmDriftExemptWrite gates a co-owned merge write (merge-json) behind the
-// caller's confirmation. Hook commands run arbitrary shell and a store may be a
-// clone of someone else's repo, so the default is NOT to write: a nil confirmer
-// or a declined prompt downgrades the change to a skip. --force bypasses the
-// gate; dry runs plan the real action and never prompt.
+// confirmDriftExemptWrite gates a hook write behind the caller's confirmation:
+// a co-owned merge write (merge-json) or a copy that drops an auto-activating
+// executable hook plugin (confirmWrite). Hook code runs unattended and a store
+// may be a clone of someone else's repo, so the default is NOT to write: a nil
+// confirmer or a declined prompt downgrades the change to a skip. --force
+// bypasses the gate; dry runs plan the real action and never prompt.
 func confirmDriftExemptWrite(ch *Change, opts Options) {
-	if opts.DryRun || opts.Force || !ch.driftExempt {
+	if opts.DryRun || opts.Force || (!ch.driftExempt && !ch.confirmWrite) {
 		return
 	}
 	if ch.Action != ActionCreate && ch.Action != ActionUpdate {
@@ -353,6 +354,7 @@ func confirmDriftExemptWrite(ch *Change, opts Options) {
 		DestRel:  ch.DestRel,
 		DestPath: ch.DestPath,
 		Creating: ch.Action == ActionCreate,
+		Merge:    ch.driftExempt,
 		Source:   ch.mergeSource,
 	}) {
 		return

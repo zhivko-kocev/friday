@@ -49,6 +49,82 @@ func settingsPath(targetAbs string) string { return filepath.Join(targetAbs, "se
 // write path without depending on the confirmation UI.
 func approve() Options { return Options{ConfirmWrite: func(WriteConfirmInfo) bool { return true }} }
 
+// TestConfirmHookCopyIsGated: a copy rule that installs an auto-activating hook
+// plugin (confirm_hook) must be gated exactly like a merge-json hook write —
+// never written unattended, written only on an explicit yes.
+func TestConfirmHookCopyIsGated(t *testing.T) {
+	storeAbs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(storeAbs, "hooks", "opencode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "export const FridayGitGuard = async () => ({});\n"
+	if err := os.WriteFile(filepath.Join(storeAbs, "hooks", "opencode", "git-guard.ts"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	targetAbs := t.TempDir()
+	cfg := &config.Config{
+		Version:  1,
+		StoreDir: storeAbs,
+		Adapters: map[string]*config.Adapter{
+			"opencode": {Target: targetAbs, Rules: []*rules.Rule{{
+				From:        rules.FromSpec{"hooks/opencode/git-guard.ts"},
+				To:          "plugins/git-guard.ts",
+				Strategy:    rules.StrategyCopy,
+				ConfirmHook: true,
+			}}},
+		},
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if runtime.GOOS == "windows" {
+		t.Setenv("LocalAppData", t.TempDir())
+	}
+	dest := filepath.Join(targetAbs, "plugins", "git-guard.ts")
+
+	// A declined prompt must not write.
+	if _, err := Push(cfg, Options{ConfirmWrite: func(WriteConfirmInfo) bool { return false }}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatalf("declined confirm still installed the plugin")
+	}
+
+	// A nil confirmer (non-interactive) must not write.
+	if _, err := Push(cfg, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatalf("nil confirmer still installed the plugin")
+	}
+
+	// An explicit yes writes it, and the confirmer sees the plugin body.
+	var got WriteConfirmInfo
+	if _, err := Push(cfg, Options{ConfirmWrite: func(i WriteConfirmInfo) bool { got = i; return true }}); err != nil {
+		t.Fatal(err)
+	}
+	if written, err := os.ReadFile(dest); err != nil {
+		t.Fatalf("approved confirm did not install the plugin: %v", err)
+	} else if string(written) != body {
+		t.Errorf("installed plugin body = %q, want %q", written, body)
+	}
+	if !strings.Contains(string(got.Source), "FridayGitGuard") {
+		t.Errorf("confirmer was not handed the plugin body: %q", got.Source)
+	}
+	if got.Merge { // a copy install is not a merge — the confirmer must say so
+		t.Errorf("confirmer told the copy install it was a merge")
+	}
+
+	// Steady state: with the plugin already in sync, a later push must NOT
+	// re-prompt or re-write — the gate only fires on Create/Update.
+	reprompted := false
+	if _, err := Push(cfg, Options{ConfirmWrite: func(WriteConfirmInfo) bool { reprompted = true; return true }}); err != nil {
+		t.Fatal(err)
+	}
+	if reprompted {
+		t.Errorf("in-sync plugin re-prompted for confirmation on a second push")
+	}
+}
+
 func TestMergeJSONPushCreatesThenPreservesNeighborNoConflict(t *testing.T) {
 	targetAbs, cfg := mergeJSONEnv(t)
 
