@@ -1,92 +1,76 @@
 package engine
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/pelletier/go-toml/v2"
+
+	"github.com/zhivko-kocev/friday/internal/render"
 )
 
 func noReplace(b []byte) []byte { return b }
 
 func TestParseAgentMD(t *testing.T) {
 	raw := []byte("---\nname: architect\ndescription: plans work\ntools: Read, Grep\n---\nYou are the architect.\nPlan first.\n")
-	rec := parseAgentMD(raw, "fallback", noReplace)
-	if rec.name != "architect" {
-		t.Errorf("name = %q, want architect", rec.name)
+	doc := parseAgentMD(raw, "fallback", noReplace)
+	if doc.Name != "architect" {
+		t.Errorf("name = %q, want architect", doc.Name)
 	}
-	if rec.description != "plans work" {
-		t.Errorf("description = %q", rec.description)
+	if doc.Description != "plans work" {
+		t.Errorf("description = %q", doc.Description)
 	}
-	if rec.body != "You are the architect.\nPlan first." {
-		t.Errorf("body = %q", rec.body)
+	if doc.Body != "You are the architect.\nPlan first." {
+		t.Errorf("body = %q", doc.Body)
 	}
 }
 
 func TestParseAgentMDNameFallsBackToStem(t *testing.T) {
-	rec := parseAgentMD([]byte("---\ndescription: d\n---\nbody"), "reviewer", noReplace)
-	if rec.name != "reviewer" {
-		t.Errorf("name = %q, want stem 'reviewer'", rec.name)
+	doc := parseAgentMD([]byte("---\ndescription: d\n---\nbody"), "reviewer", noReplace)
+	if doc.Name != "reviewer" {
+		t.Errorf("name = %q, want stem 'reviewer'", doc.Name)
 	}
 }
 
 func TestParseAgentMDAppliesReplace(t *testing.T) {
 	upper := func(b []byte) []byte { return []byte(strings.ToUpper(string(b))) }
-	rec := parseAgentMD([]byte("---\nname: n\n---\nsee ${x}"), "s", upper)
-	if rec.body != "SEE ${X}" {
-		t.Errorf("replace not applied to body: %q", rec.body)
+	doc := parseAgentMD([]byte("---\nname: n\n---\nsee ${x}"), "s", upper)
+	if doc.Body != "SEE ${X}" {
+		t.Errorf("replace not applied to body: %q", doc.Body)
 	}
 }
 
-func TestMDToTOMLEscapesSoBodyRoundTrips(t *testing.T) {
-	// A body with a backslash and a run of quotes must not close the multiline
-	// string early and must decode back to the original.
-	body := `path C:\dir and a "quote" and """triple"""`
-	out := string(mdToTOML(mdRecord{name: "a", description: `d"q`, body: body}))
-	if !strings.Contains(out, `name = "a"`) {
-		t.Errorf("missing name line:\n%s", out)
-	}
-	if !strings.Contains(out, `description = "d\"q"`) {
-		t.Errorf("description not escaped:\n%s", out)
-	}
-	// The body's literal `"""` must have been escaped so it can't terminate the
-	// developer_instructions string prematurely.
-	if strings.Contains(out, `"""triple"""`) {
-		t.Errorf("unescaped triple-quote run leaks into TOML:\n%s", out)
-	}
-	// Decode the multiline value the way TOML would (\\ → \, \" → ") and confirm
-	// it matches the original body.
-	start := strings.Index(out, "\"\"\"\n")
-	end := strings.LastIndex(out, "\"\"\"")
-	if start < 0 || end <= start {
-		t.Fatalf("no multiline string found:\n%s", out)
-	}
-	enc := out[start+4 : end]
-	dec := strings.ReplaceAll(enc, `\"`, `"`)
-	dec = strings.ReplaceAll(dec, `\\`, `\`)
-	if dec != body {
-		t.Errorf("body did not round-trip:\n got %q\nwant %q", dec, body)
-	}
-}
+// TestParseAgentMDAdversarialBodyRoundTripsThroughCodexTOML is the escaping
+// regression the retired md-to-toml strategy used to carry: a body holding
+// quotes, backslashes, a literal """ run and a trailing quote must not
+// terminate the multiline string early, and must decode back byte for byte.
+// go-toml is pinned to an unreleased pseudo-version, so the guarantee is
+// asserted here rather than assumed.
+func TestParseAgentMDAdversarialBodyRoundTripsThroughCodexTOML(t *testing.T) {
+	body := "say \"hi\" and a \\ backslash\nthen a \"\"\"triple\"\"\" run\nand a trailing quote\""
+	raw := []byte("---\nname: a\ndescription: 'd\"q'\n---\n" + body + "\n")
 
-func TestMDToJSONValidAndFielded(t *testing.T) {
-	out, err := mdToJSON(mdRecord{name: "architect", description: "plans", body: "do the thing"})
+	doc := parseAgentMD(raw, "stem", noReplace)
+	out, err := render.CodexAgent(doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var m map[string]any
-	if err := json.Unmarshal(out, &m); err != nil {
-		t.Fatalf("emitted invalid JSON: %v\n%s", err, out)
-	}
-	if m["name"] != "architect" || m["description"] != "plans" || m["prompt"] != "do the thing" {
-		t.Errorf("unexpected fields: %v", m)
-	}
-}
 
-func TestMDToJSONOmitsEmptyDescription(t *testing.T) {
-	out, _ := mdToJSON(mdRecord{name: "n", body: "b"})
-	var m map[string]any
-	_ = json.Unmarshal(out, &m)
-	if _, ok := m["description"]; ok {
-		t.Errorf("empty description should be omitted: %v", m)
+	var got struct {
+		Name                  string `toml:"name"`
+		Description           string `toml:"description"`
+		DeveloperInstructions string `toml:"developer_instructions"`
+	}
+	if err := toml.Unmarshal(out, &got); err != nil {
+		t.Fatalf("invalid TOML: %v\n%s", err, out)
+	}
+	if got.Name != "a" {
+		t.Errorf("name = %q, want a", got.Name)
+	}
+	if got.Description != `d"q` {
+		t.Errorf("description = %q, want d\"q — the quote must be escaped, not dropped", got.Description)
+	}
+	if got.DeveloperInstructions != body {
+		t.Errorf("body did not round-trip:\n got %q\nwant %q\nrendered:\n%s", got.DeveloperInstructions, body, out)
 	}
 }

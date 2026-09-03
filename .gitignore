@@ -1,6 +1,10 @@
-# Build artifacts
+# Build artifacts. The friday[-_]* form catches any locally-built variant
+# (friday-review.exe, friday_review_test.exe) that a `git add -A` would
+# otherwise bake an 18 MB binary into history with. No tracked file starts
+# with "friday-" or "friday_".
 /friday
 /friday.exe
+/friday[-_]*
 /dist/
 
 # Test artifacts

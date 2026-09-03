@@ -1,40 +1,44 @@
 package cli
 
 import (
-	"flag"
+	"context"
 	"fmt"
+
+	ucli "github.com/urfave/cli/v3"
 
 	"github.com/zhivko-kocev/friday/internal/drift"
 	"github.com/zhivko-kocev/friday/internal/output"
 	"github.com/zhivko-kocev/friday/internal/snapshot"
 )
 
-type rollbackOpts struct {
-	list, dryRun bool
-}
-
-func rollbackFlags(o *rollbackOpts) *flag.FlagSet {
-	fs := flag.NewFlagSet("rollback", flag.ContinueOnError)
-	fs.BoolVar(&o.list, "list", false, "list recorded snapshots")
-	fs.BoolVar(&o.dryRun, "dry-run", false, "show what would be restored without writing")
-	return fs
-}
-
-// cmdRollback restores the target state recorded at a previous push — the
-// safety net for "I pushed and it ate something". No id = latest snapshot.
-func cmdRollback(args []string) int {
-	var o rollbackOpts
-	fs := rollbackFlags(&o)
-	if err := fs.Parse(args); err != nil {
-		return 1
+// newRollbackCommand restores the target state recorded at a previous push
+// — the safety net for "I pushed and it ate something". No id = latest
+// snapshot.
+func newRollbackCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:      "rollback",
+		Aliases:   []string{"undo"},
+		Category:  "advanced",
+		Usage:     "restore files from a pre-write snapshot",
+		ArgsUsage: "[id]",
+		Flags: []ucli.Flag{
+			&ucli.BoolFlag{Name: "list", Usage: "list recorded snapshots"},
+			&ucli.BoolFlag{Name: "dry-run", Usage: "show what would be restored without writing"},
+		},
+		Action: func(_ context.Context, cmd *ucli.Command) error {
+			return exitFromCode(runRollback(cmd.Bool("list"), cmd.Bool("dry-run"), cmd.Args().Slice()))
+		},
 	}
+}
+
+func runRollback(list, dryRun bool, args []string) int {
 	dir, err := snapshot.Dir()
 	if err != nil {
 		output.Err("%v", err)
 		return 1
 	}
 
-	if o.list {
+	if list {
 		snaps, err := snapshot.List(dir)
 		if err != nil {
 			output.Err("%v", err)
@@ -52,12 +56,12 @@ func cmdRollback(args []string) int {
 	}
 
 	id := ""
-	if fs.NArg() > 1 {
+	if len(args) > 1 {
 		output.Err("usage: friday rollback [--list] [--dry-run] [<id>]")
 		return 1
 	}
-	if fs.NArg() == 1 {
-		id = fs.Arg(0)
+	if len(args) == 1 {
+		id = args[0]
 	}
 	snap, err := snapshot.Get(dir, id)
 	if err != nil {
@@ -65,7 +69,7 @@ func cmdRollback(args []string) int {
 		return 1
 	}
 
-	if o.dryRun {
+	if dryRun {
 		output.Header(fmt.Sprintf("rollback %s (dry-run)", snap.ID))
 		for _, f := range snap.Files {
 			if f.OldHash == "" {

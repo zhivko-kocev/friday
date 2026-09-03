@@ -1,102 +1,123 @@
 package cli
 
 import (
-	"flag"
+	"context"
 	"os"
+	"strings"
+
+	ucli "github.com/urfave/cli/v3"
 
 	"github.com/zhivko-kocev/friday/internal/config"
 	"github.com/zhivko-kocev/friday/internal/drift"
 	"github.com/zhivko-kocev/friday/internal/engine"
 	"github.com/zhivko-kocev/friday/internal/output"
+	"github.com/zhivko-kocev/friday/internal/rules"
+	"github.com/zhivko-kocev/friday/internal/source"
 )
 
-type statusOpts struct {
-	asJSON bool
-	diff   bool
-	check  bool
-	origin bool
-}
-
-func statusFlags(o *statusOpts) *flag.FlagSet {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	fs.BoolVar(&o.asJSON, "json", false, "machine-readable output")
-	fs.BoolVar(&o.diff, "diff", false, "also print the content diff for each pending render")
-	fs.BoolVar(&o.check, "check", false, "exit 2 if anything is out of sync (for CI); 0 when clean")
-	fs.BoolVar(&o.origin, "origin", false, "also show where each adapter is defined (friday.yaml / built-in)")
-	return fs
-}
-
-// cmdStatus — a two-axis view of every managed file (no writes): column 1 is
-// local drift (the target edited since friday last wrote it — a hand edit to
-// capture), column 2 is the pending render (canonical differs from the
-// target). Mirrors chezmoi's two-column `status`.
+// newStatusCommand is a two-axis view of every managed file (no writes):
+// column 1 is local drift (the target edited since friday last wrote it — a
+// hand edit to capture), column 2 is the pending render (canonical differs
+// from the target). Mirrors chezmoi's two-column `status`.
 //
 // The --json body and the default exit code are computed from the
-// push-direction plan exactly as before — the drift column is display-only, so
-// existing CI parsers and the exit-2-on-conflict contract don't move. --check
-// opts into terraform-style detailed exit codes (2 = anything pending).
-func cmdStatus(args []string) int {
-	var o statusOpts
-	fs := statusFlags(&o)
-	if err := fs.Parse(args); err != nil {
-		return 1
+// push-direction plan exactly as before — the drift column is display-only,
+// so existing CI parsers and the exit-2-on-conflict contract don't move.
+// --check opts into terraform-style detailed exit codes (2 = anything
+// pending).
+func newStatusCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:          "status",
+		Category:      "porcelain",
+		Usage:         "show what would change (no writes)",
+		ArgsUsage:     "[adapter...]",
+		ShellComplete: completeAdapters,
+		Flags: []ucli.Flag{
+			&ucli.BoolFlag{Name: "json", Usage: "machine-readable output"},
+			&ucli.BoolFlag{Name: "diff", Usage: "also print the content diff for each pending render"},
+			&ucli.BoolFlag{Name: "check", Usage: "exit 2 if anything is out of sync (for CI); 0 when clean"},
+			&ucli.BoolFlag{Name: "origin", Usage: "also show where each adapter is defined (friday.yaml / built-in)"},
+		},
+		Action: runStatus,
 	}
+}
+
+func runStatus(_ context.Context, cmd *ucli.Command) error {
+	adapters := cmd.Args().Slice()
+	asJSON := cmd.Bool("json")
+	check := cmd.Bool("check")
+
 	cfg, err := loadUserOrDefault()
 	if err != nil {
 		output.Err("%v", err)
-		return 1
+		return ucli.Exit("", 1)
 	}
-	if len(fs.Args()) > 0 {
-		if _, err := cfg.SelectAdapters(fs.Args()); err != nil {
+	if len(adapters) > 0 {
+		if _, err := cfg.SelectAdapters(adapters); err != nil {
 			output.Err("%v", err)
-			return 1
+			return ucli.Exit("", 1)
 		}
 	}
 	changes, err := engine.Push(cfg, engine.Options{
-		Adapters: fs.Args(),
+		Adapters: adapters,
 		DryRun:   true,
 	})
 	if err != nil {
 		output.Err("%v", err)
-		return 1
+		return ucli.Exit("", 1)
 	}
-	if o.asJSON {
+	if asJSON {
 		if err := printStatusJSON(cfg, changes); err != nil {
 			output.Err("%v", err)
-			return 1
+			return ucli.Exit("", 1)
 		}
 		// Default JSON exit stays byte-identical to before (push-only, no drift
 		// read). --check opts into the drift-aware gate — the exact CI use case
 		// it exists for; the extra read is read-only, so status still writes
 		// nothing.
-		if o.check {
-			return statusExit(changes, buildStatusRows(changes, handEditedLookup()), true)
+		if check {
+			return exitFromCode(statusExit(changes, buildStatusRows(changes, handEditedLookup()), true))
 		}
-		return exitCode(changes)
+		return exitErr(changes)
 	}
 
 	output.Header("Friday Status (user)")
 	output.Dim("store: %s", cfg.StoreDir)
 	installed := map[string]bool{}
-	for _, name := range cfg.AdapterNames() {
+	names := cfg.AdapterNames()
+	gridRows := make([][]string, len(names))
+	installedAt := make([]bool, len(names))
+	for i, name := range names {
 		abs, _ := cfg.AdapterTargetAbs(name)
-		if dirExists(abs) {
+		// The same definition push and sync use. A bare dirExists here made
+		// status report the shared "agents" adapter as missing, and fold its
+		// pending files under "`friday sync` sets it up", while sync was
+		// already writing there — status has to describe what sync will do.
+		installedAt[i] = adapterInstalled(cfg, name)
+		status := "[missing]"
+		if installedAt[i] {
 			installed[name] = true
-			output.OK("%-10s [installed]  %s", name, abs)
+			status = "[installed]"
+		}
+		gridRows[i] = []string{name, status, abs}
+	}
+	for i, line := range alignTable(nil, gridRows) {
+		if installedAt[i] {
+			output.OK("%s", line)
 		} else {
-			output.Skip("%-10s [missing]    %s", name, abs)
+			output.Skip("%s", line)
 		}
 	}
 
 	rows := buildStatusRows(changes, handEditedLookup())
 	printStatusGrid(rows, installed)
-	if o.diff {
+	if cmd.Bool("diff") {
 		printDiffs(changes)
 	}
-	if o.origin {
+	if cmd.Bool("origin") {
 		printStatusOrigin(cfg)
 	}
-	return statusExit(changes, rows, o.check)
+	return exitFromCode(statusExit(changes, rows, check))
 }
 
 // statusRow is the two-axis reconcile state of one managed file.
@@ -286,6 +307,12 @@ func printGridRows(shown []statusRow, width int) {
 // friday.yaml manifest is authoritative when present — that's where you edit
 // an adapter; with no manifest, friday falls back to the built-in presets.
 // (The loader is either/or, not a merge, so this is exact.)
+//
+// A multi-source store (Phase 2) additionally gets a per-rule Source column
+// naming which configured sources currently hold a matching file — a plain
+// single-source store (today's common case) shows nothing extra here, since
+// there is only ever one place a file could come from (D10: unified by
+// default; --origin's per-rule detail is the one opt-in exception).
 func printStatusOrigin(cfg *config.Config) {
 	output.Header("origin:")
 	manifest := false
@@ -296,9 +323,34 @@ func printStatusOrigin(cfg *config.Config) {
 	if manifest {
 		origin = "friday.yaml"
 	}
-	for _, name := range cfg.AdapterNames() {
+	var roots []rules.Root
+	if len(cfg.Sources) > 0 {
+		if set, err := source.Load(cfg); err == nil {
+			roots = set.Roots()
+			names := make([]string, len(roots))
+			for i, r := range roots {
+				names[i] = r.Name
+			}
+			output.Dim("sources: %s", strings.Join(names, ", "))
+			// A source in the manifest but absent from disk contributes no
+			// files, so every rule quietly renders from whatever is left —
+			// the natural state between `friday source add` and the first
+			// `friday source update`. Listing it above as if it were present
+			// is how an incomplete render reaches every agent unnoticed.
+			for _, missing := range set.Uncloned() {
+				output.Warn("%s: not cloned — run `friday source update`", missing)
+			}
+		}
+	}
+	names := cfg.AdapterNames()
+	gridRows := make([][]string, len(names))
+	for i, name := range names {
 		target, _ := cfg.AdapterTargetAbs(name)
-		output.Line(output.LevelInfo, "%-12s %-11s %s", name, origin, target)
+		gridRows[i] = []string{name, origin, target}
+	}
+	for i, line := range alignTable(nil, gridRows) {
+		name := names[i]
+		output.Line(output.LevelInfo, "%s", line)
 		// Each adapter's rule mappings (strategy: from → to) — the one view the
 		// removed `list` command uniquely offered, folded in here.
 		for _, r := range cfg.Adapters[name].Rules {
@@ -306,7 +358,11 @@ func printStatusOrigin(cfg *config.Config) {
 			if strat == "" {
 				strat = "copy"
 			}
-			output.Dim("  %s  %v → %s", strat, []string(r.From), r.To)
+			if len(roots) > 0 {
+				output.Dim("  %s  %v → %s  [%s]", strat, []string(r.From), r.To, strings.Join(ruleSources(roots, r.From), ", "))
+			} else {
+				output.Dim("  %s  %v → %s", strat, []string(r.From), r.To)
+			}
 		}
 	}
 	if manifest {
@@ -314,6 +370,32 @@ func printStatusOrigin(cfg *config.Config) {
 	} else {
 		output.Dim("no friday.yaml — using built-in presets")
 	}
+}
+
+// ruleSources returns the distinct source names, in roots' own precedence
+// order (lowest first), that currently hold at least one file matching any
+// of the rule's from-patterns.
+func ruleSources(roots []rules.Root, from rules.FromSpec) []string {
+	seen := map[string]bool{}
+	for _, pat := range from {
+		matched, _, err := rules.ExpandAll(roots, pat)
+		if err != nil {
+			continue
+		}
+		for _, m := range matched {
+			seen[m.Source] = true
+		}
+	}
+	var ordered []string
+	for _, r := range roots {
+		if seen[r.Name] {
+			ordered = append(ordered, r.Name)
+		}
+	}
+	if len(ordered) == 0 {
+		return []string{"none"}
+	}
+	return ordered
 }
 
 // statusExit maps the run to a process exit code. Without --check it preserves

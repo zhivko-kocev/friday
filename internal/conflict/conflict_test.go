@@ -1,6 +1,7 @@
 package conflict
 
 import (
+	"bufio"
 	"bytes"
 	"strings"
 	"testing"
@@ -9,7 +10,7 @@ import (
 func TestPromptKeep(t *testing.T) {
 	in := strings.NewReader("k\n")
 	out := &bytes.Buffer{}
-	if got, _ := promptIO(in, out, "src", "dest", []byte("a"), []byte("b"), nil); got != ChoiceKeep {
+	if got, _ := promptIO(bufio.NewReader(in), out, "OUT.md", "src", "dest", []byte("a"), []byte("b"), nil); got != ChoiceKeep {
 		t.Errorf("got %v, want ChoiceKeep", got)
 	}
 }
@@ -17,7 +18,7 @@ func TestPromptKeep(t *testing.T) {
 func TestPromptTake(t *testing.T) {
 	in := strings.NewReader("t\n")
 	out := &bytes.Buffer{}
-	if got, _ := promptIO(in, out, "src", "dest", []byte("a"), []byte("b"), nil); got != ChoiceTake {
+	if got, _ := promptIO(bufio.NewReader(in), out, "OUT.md", "src", "dest", []byte("a"), []byte("b"), nil); got != ChoiceTake {
 		t.Errorf("got %v, want ChoiceTake", got)
 	}
 }
@@ -25,7 +26,7 @@ func TestPromptTake(t *testing.T) {
 func TestPromptSkipOnBlankLine(t *testing.T) {
 	in := strings.NewReader("\n")
 	out := &bytes.Buffer{}
-	if got, _ := promptIO(in, out, "src", "dest", []byte("a"), []byte("b"), nil); got != ChoiceSkip {
+	if got, _ := promptIO(bufio.NewReader(in), out, "OUT.md", "src", "dest", []byte("a"), []byte("b"), nil); got != ChoiceSkip {
 		t.Errorf("got %v, want ChoiceSkip", got)
 	}
 }
@@ -34,7 +35,7 @@ func TestPromptDiffThenChoose(t *testing.T) {
 	// First "d" prints a diff, then "k" picks keep.
 	in := strings.NewReader("d\nk\n")
 	out := &bytes.Buffer{}
-	got, _ := promptIO(in, out, "canonical", "target", []byte("one\n"), []byte("two\n"), nil)
+	got, _ := promptIO(bufio.NewReader(in), out, "OUT.md", "canonical", "target", []byte("one\n"), []byte("two\n"), nil)
 	if got != ChoiceKeep {
 		t.Errorf("got %v, want ChoiceKeep", got)
 	}
@@ -50,7 +51,7 @@ func TestPromptDiffThenChoose(t *testing.T) {
 func TestPromptUnknownThenSkip(t *testing.T) {
 	in := strings.NewReader("zzz\nq\n\n")
 	out := &bytes.Buffer{}
-	got, _ := promptIO(in, out, "src", "dest", nil, nil, nil)
+	got, _ := promptIO(bufio.NewReader(in), out, "OUT.md", "src", "dest", nil, nil, nil)
 	if got != ChoiceSkip {
 		t.Errorf("got %v, want ChoiceSkip after junk", got)
 	}
@@ -62,7 +63,7 @@ func TestPromptUnknownThenSkip(t *testing.T) {
 func TestPromptEOFSkips(t *testing.T) {
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
-	if got, _ := promptIO(in, out, "s", "d", nil, nil, nil); got != ChoiceSkip {
+	if got, _ := promptIO(bufio.NewReader(in), out, "OUT.md", "s", "d", nil, nil, nil); got != ChoiceSkip {
 		t.Errorf("got %v, want ChoiceSkip on EOF", got)
 	}
 }
@@ -70,7 +71,7 @@ func TestPromptEOFSkips(t *testing.T) {
 func TestPromptMergeHiddenWithoutBase(t *testing.T) {
 	in := strings.NewReader("m\ns\n")
 	out := &bytes.Buffer{}
-	got, merged := promptIO(in, out, "src", "dest", []byte("a"), []byte("b"), nil)
+	got, merged := promptIO(bufio.NewReader(in), out, "OUT.md", "src", "dest", []byte("a"), []byte("b"), nil)
 	if got != ChoiceSkip || merged != nil {
 		t.Errorf("got %v/%q, want skip and no merge without a base", got, merged)
 	}
@@ -85,7 +86,7 @@ func TestPromptCleanMerge(t *testing.T) {
 	theirs := []byte("one\ntwo\nTHREE\n") // edited line 3
 	in := strings.NewReader("m\n")
 	out := &bytes.Buffer{}
-	got, merged := promptIO(in, out, "canonical", "target", ours, theirs, base)
+	got, merged := promptIO(bufio.NewReader(in), out, "OUT.md", "canonical", "target", ours, theirs, base)
 	if got != ChoiceMerge {
 		t.Fatalf("got %v, want ChoiceMerge", got)
 	}
@@ -101,7 +102,7 @@ func TestPromptDirtyMergeDeclined(t *testing.T) {
 	// m → overlap prompt, answer n → back to the menu → s skips.
 	in := strings.NewReader("m\nn\ns\n")
 	out := &bytes.Buffer{}
-	got, _ := promptIO(in, out, "canonical", "target", ours, theirs, base)
+	got, _ := promptIO(bufio.NewReader(in), out, "OUT.md", "canonical", "target", ours, theirs, base)
 	if got != ChoiceSkip {
 		t.Errorf("got %v, want ChoiceSkip after declining markers", got)
 	}
@@ -116,7 +117,7 @@ func TestPromptDirtyMergeWithMarkers(t *testing.T) {
 	theirs := []byte("THEIRS\n")
 	in := strings.NewReader("m\ny\n")
 	out := &bytes.Buffer{}
-	got, merged := promptIO(in, out, "canonical", "target", ours, theirs, base)
+	got, merged := promptIO(bufio.NewReader(in), out, "OUT.md", "canonical", "target", ours, theirs, base)
 	if got != ChoiceMerge {
 		t.Fatalf("got %v, want ChoiceMerge", got)
 	}
@@ -134,9 +135,38 @@ func TestPromptMenuWordsOptionsFromLabels(t *testing.T) {
 	// what the choices do there. The menu must be built from the labels.
 	in := strings.NewReader("s\n")
 	out := &bytes.Buffer{}
-	promptIO(in, out, "target", "store", []byte("a"), []byte("b"), nil)
+	promptIO(bufio.NewReader(in), out, "OUT.md", "target", "store", []byte("a"), []byte("b"), nil)
 	menu := out.String()
 	if !strings.Contains(menu, "[k] keep target") || !strings.Contains(menu, "[t] use store") {
 		t.Errorf("pull-direction menu misleads:\n%s", menu)
+	}
+}
+
+func TestPromptMenuNamesTheFile(t *testing.T) {
+	// "keep canonical" discards the target's hand edits. The caller's
+	// "CONFLICT: x" line is progress output and vanishes under --quiet, so
+	// the menu itself must name the file being decided.
+	in := strings.NewReader("s\n")
+	out := &bytes.Buffer{}
+	promptIO(bufio.NewReader(in), out, "agents/a.md", "canonical (store)", "target", []byte("a"), []byte("b"), nil)
+	if !strings.Contains(out.String(), "agents/a.md") {
+		t.Errorf("menu never names the conflicting file:\n%s", out.String())
+	}
+}
+
+func TestPromptSharedReaderSurvivesSuccessiveConflicts(t *testing.T) {
+	// bufio reads ahead: a reader allocated per prompt swallows the whole
+	// piped answer stream into a buffer it then discards, so the second
+	// conflict in a run would see EOF and silently skip. One shared reader
+	// must answer every prompt in order.
+	r := bufio.NewReader(strings.NewReader("k\nt\n"))
+	out := &bytes.Buffer{}
+	first, _ := promptIO(r, out, "a.md", "canonical", "target", []byte("a"), []byte("b"), nil)
+	second, _ := promptIO(r, out, "b.md", "canonical", "target", []byte("a"), []byte("b"), nil)
+	if first != ChoiceKeep {
+		t.Errorf("first = %v, want ChoiceKeep", first)
+	}
+	if second != ChoiceTake {
+		t.Errorf("second = %v, want ChoiceTake — the shared reader lost the queued answer", second)
 	}
 }

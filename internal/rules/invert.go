@@ -69,7 +69,7 @@ func splitTemplate(t string) (prefix, token string, ok bool) {
 			continue
 		}
 		prefix = strings.TrimSuffix(t, tok)
-		if hasToken(prefix) || hasWildcard(prefix) {
+		if hasToken(prefix) || HasWildcard(prefix) {
 			return "", "", false
 		}
 		return prefix, tok, true

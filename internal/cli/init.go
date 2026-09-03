@@ -1,58 +1,53 @@
 package cli
 
 import (
-	"flag"
+	"context"
 	"os"
-	"strings"
+
+	ucli "github.com/urfave/cli/v3"
 
 	"github.com/zhivko-kocev/friday/internal/initcmd"
 	"github.com/zhivko-kocev/friday/internal/output"
 )
 
-type initOpts struct {
-	fromGit  string
-	scaffold bool
-}
+// newInitCommand either prompts for a remote URL (interactive default) or
+// accepts one via --from-git (CI / scripts). --scaffold forces the
+// empty-store path without any prompt at all.
+func newInitCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:     "init",
+		Category: "porcelain",
+		Usage:    "clone or scaffold your ~/.friday store",
+		Flags: []ucli.Flag{
+			&ucli.StringFlag{Name: "from-git", Usage: "git remote URL to clone into ~/.friday (skips the prompt)"},
+			&ucli.BoolFlag{Name: "scaffold", Usage: "scaffold an empty store without prompting"},
+		},
+		Action: func(_ context.Context, cmd *ucli.Command) error {
+			if cmd.Args().Len() > 0 {
+				output.Err("friday init takes flags only — got positional arg %q", cmd.Args().First())
+				return ucli.Exit("", 1)
+			}
+			fromGit := cmd.String("from-git")
+			scaffold := cmd.Bool("scaffold")
+			if fromGit != "" && scaffold {
+				output.Err("--from-git and --scaffold are mutually exclusive")
+				return ucli.Exit("", 1)
+			}
 
-func initFlags(o *initOpts) *flag.FlagSet {
-	fs := flag.NewFlagSet("init", flag.ContinueOnError)
-	fs.StringVar(&o.fromGit, "from-git", "", "git remote URL to clone into ~/.friday (skips the prompt)")
-	fs.BoolVar(&o.scaffold, "scaffold", false, "scaffold an empty store without prompting")
-	return fs
-}
-
-// cmdInit either prompts for a remote URL (interactive default) or accepts
-// one via --from-git (CI / scripts). --scaffold forces the empty-store path
-// without any prompt at all.
-func cmdInit(args []string) int {
-	var o initOpts
-	fs := initFlags(&o)
-	// --remote was the earlier name for --from-git; keep it working but nudge.
-	args = renameFlag(args, "remote", "from-git", "note: --remote is deprecated; use --from-git")
-	if err := fs.Parse(args); err != nil {
-		return 1
+			var err error
+			switch {
+			case scaffold:
+				err = initcmd.RunWithURL("")
+			case fromGit != "":
+				err = initcmd.RunWithURL(fromGit)
+			default:
+				err = initcmd.Run(os.Stdin)
+			}
+			if err != nil {
+				output.Err("%v", err)
+				return ucli.Exit("", 1)
+			}
+			return nil
+		},
 	}
-	if fs.NArg() > 0 {
-		output.Err("friday init takes flags only — got positional arg %q", fs.Arg(0))
-		return 1
-	}
-	if o.fromGit != "" && o.scaffold {
-		output.Err("--from-git and --scaffold are mutually exclusive")
-		return 1
-	}
-
-	var err error
-	switch {
-	case o.scaffold:
-		err = initcmd.Run(strings.NewReader("\n"))
-	case o.fromGit != "":
-		err = initcmd.Run(strings.NewReader(o.fromGit + "\n"))
-	default:
-		err = initcmd.Run(os.Stdin)
-	}
-	if err != nil {
-		output.Err("%v", err)
-		return 1
-	}
-	return 0
 }

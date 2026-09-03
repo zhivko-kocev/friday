@@ -1,66 +1,65 @@
 package cli
 
 import (
-	"flag"
+	"context"
 	"os"
+
+	ucli "github.com/urfave/cli/v3"
 
 	"github.com/zhivko-kocev/friday/internal/engine"
 	"github.com/zhivko-kocev/friday/internal/output"
 	"github.com/zhivko-kocev/friday/internal/setupcmd"
 )
 
-type setupOpts struct {
-	agent                        string
-	dryRun, force, noInteractive bool
-}
+// newSetupCommand interactively applies selected store knowledge into the
+// current project's agent config (git-tracked by the project, no .friday
+// folder).
+func newSetupCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:     "setup",
+		Category: "porcelain",
+		Usage:    "add friday knowledge to the current project",
+		Flags: []ucli.Flag{
+			&ucli.StringFlag{Name: "agent", Usage: "agent preset to set up (skips the prompt)"},
+			&ucli.BoolFlag{Name: "dry-run", Usage: "show what would change without writing"},
+			&ucli.BoolFlag{Name: "force", Usage: "overwrite without prompting on drift"},
+			&ucli.BoolFlag{Name: "no-interactive", Usage: "don't prompt on drift; treat conflicts as skip"},
+		},
+		Action: func(_ context.Context, cmd *ucli.Command) error {
+			if cmd.Args().Len() > 0 {
+				output.Err("friday setup takes no positional arguments (use --agent NAME)")
+				return ucli.Exit("", 1)
+			}
+			dryRun := cmd.Bool("dry-run")
+			noInteractive := cmd.Bool("no-interactive")
 
-func setupFlags(o *setupOpts) *flag.FlagSet {
-	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
-	fs.StringVar(&o.agent, "agent", "", "agent preset to set up (skips the prompt)")
-	fs.BoolVar(&o.dryRun, "dry-run", false, "show what would change without writing")
-	fs.BoolVar(&o.force, "force", false, "overwrite without prompting on drift")
-	fs.BoolVar(&o.noInteractive, "no-interactive", false, "don't prompt on drift; treat conflicts as skip")
-	return fs
-}
+			cwd, err := os.Getwd()
+			if err != nil {
+				output.Err("%v", err)
+				return ucli.Exit("", 1)
+			}
 
-// cmdSetup — interactively apply selected store knowledge into the current
-// project's agent config (git-tracked by the project, no .friday folder).
-func cmdSetup(args []string) int {
-	var o setupOpts
-	fs := setupFlags(&o)
-	if err := fs.Parse(args); err != nil {
-		return 1
+			var resolver engine.ConflictResolver
+			var confirm engine.ConfirmWriter
+			if !noInteractive {
+				resolver = interactiveResolver()
+				confirm = hookWriteConfirmer()
+			}
+			changes, err := setupcmd.Run(os.Stdin, cwd, setupcmd.Options{
+				Agent:       cmd.String("agent"),
+				DryRun:      dryRun,
+				Force:       cmd.Bool("force"),
+				Interactive: !noInteractive,
+			}, resolver, confirm)
+			if err != nil {
+				output.Err("%v", err)
+				return ucli.Exit("", 1)
+			}
+			if !dryRun {
+				recordSnapshot(changes)
+			}
+			report(changes, false, dryRun)
+			return exitErr(changes)
+		},
 	}
-	if fs.NArg() > 0 {
-		output.Err("friday setup takes no positional arguments (use --agent NAME)")
-		return 1
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		output.Err("%v", err)
-		return 1
-	}
-
-	var resolver engine.ConflictResolver
-	var confirm engine.ConfirmWriter
-	if !o.noInteractive {
-		resolver = interactiveResolver()
-		confirm = hookWriteConfirmer()
-	}
-	changes, err := setupcmd.Run(os.Stdin, cwd, setupcmd.Options{
-		Agent:       o.agent,
-		DryRun:      o.dryRun,
-		Force:       o.force,
-		Interactive: !o.noInteractive,
-	}, resolver, confirm)
-	if err != nil {
-		output.Err("%v", err)
-		return 1
-	}
-	if !o.dryRun {
-		recordSnapshot(changes)
-	}
-	report(changes, false, o.dryRun)
-	return exitCode(changes)
 }

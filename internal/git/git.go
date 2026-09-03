@@ -7,7 +7,9 @@ package git
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 )
@@ -28,16 +30,60 @@ func Available() bool {
 	return err == nil
 }
 
-// ValidateURL rejects strings that git would interpret as a flag, plus
-// obviously empty input. Without this, `git clone --upload-pack=evil`
-// would smuggle a flag through any code path that takes a user-supplied
-// URL.
+// urlSchemes are the transports friday supports. A positive allowlist, because
+// git resolves any unknown `scheme://` to a `git-remote-<scheme>` helper
+// binary, which is a program lookup driven by untrusted input.
+var urlSchemes = []string{"https", "http", "ssh", "git", "file"}
+
+// ValidateURL rejects strings git would read as something other than a plain
+// remote address. `sources[].url` is untrusted input — a manifest can arrive
+// from someone else's clone via `friday init --from-git`, and
+// `friday source update` then feeds it straight to Clone.
+//
+// Three separate things are refused, because each escapes differently:
+//
+//   - A leading '-', which any subcommand would read as a flag
+//     (`--upload-pack=evil`).
+//   - git's `<transport>::<address>` helper syntax. Clone's `--` terminator
+//     only stops flag parsing; it does nothing about the transport layer, and
+//     `ext::<command>` runs that command as its way of "connecting". The
+//     terminator is why this has to be checked here rather than assumed away.
+//   - A `scheme://` outside urlSchemes, for the same helper-lookup reason.
+//
+// A local path and the scp-like `user@host:path` form carry no scheme and pass
+// through; a Windows drive letter is a single colon, never '::'.
 func ValidateURL(url string) error {
 	if url == "" {
 		return fmt.Errorf("git url is empty")
 	}
 	if strings.HasPrefix(url, "-") {
 		return fmt.Errorf("git url %q starts with '-' (refusing to pass as flag)", url)
+	}
+	head, _, _ := strings.Cut(url, "/")
+	if strings.Contains(head, "::") {
+		return fmt.Errorf("git url %q names a transport helper (`transport::address`), which can execute a command; use an https, ssh or file url", url)
+	}
+	if scheme, _, ok := strings.Cut(url, "://"); ok {
+		if !slices.Contains(urlSchemes, strings.ToLower(scheme)) {
+			return fmt.Errorf("git url %q uses unsupported scheme %q (allowed: %s)", url, scheme, strings.Join(urlSchemes, ", "))
+		}
+	}
+	return nil
+}
+
+// ValidateRef rejects strings `git checkout` would read as an option rather
+// than a ref. Unlike Clone, checkout has no usable `--` terminator — after
+// it, arguments are pathspecs, not refs — so validation is the only control
+// available, and `sources[].ref` is untrusted input (a manifest can arrive
+// from someone else's clone via `friday init --from-git`). `ref: --force`
+// would otherwise become `git checkout --detach --force` and throw away
+// local modifications in the source's clone.
+func ValidateRef(ref string) error {
+	if ref == "" {
+		return fmt.Errorf("git ref is empty")
+	}
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("git ref %q starts with '-' (refusing to pass as flag)", ref)
 	}
 	return nil
 }
@@ -64,7 +110,7 @@ func Pull(dir string) error {
 
 // IsRepo returns true if dir is inside a git working tree.
 func IsRepo(dir string) bool {
-	return exec.Command("git", "-C", dir, "rev-parse", "--git-dir").Run() == nil
+	return command("-C", dir, "rev-parse", "--git-dir").Run() == nil
 }
 
 // HasUncommitted reports whether dir has any staged or unstaged changes.
@@ -182,13 +228,87 @@ func OriginURL(dir string) string {
 	return strings.TrimSpace(out)
 }
 
+// Fetch downloads new commits, refs, and tags for dir's origin remote
+// without touching the working tree — the read half of `friday source
+// update` for a ref-less (tracking-the-default-branch) source. Clone's
+// --depth=1 implies --single-branch, narrowing the remote's fetch refspec
+// to just the branch cloned; Fetch widens it back to every branch first, so
+// a source can still be checked out onto a different branch, tag, or sha
+// later — CheckoutRef would otherwise never see anything Clone didn't.
+func Fetch(dir string) error {
+	if err := run("-C", dir, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"); err != nil {
+		return err
+	}
+	return run("-C", dir, "fetch", "--tags", "origin")
+}
+
+// CheckoutRef switches dir's working tree to ref. A branch checks out
+// attached, so a later Pull can fast-forward it; a tag or commit sha checks
+// out detached — there is no branch tip to fast-forward a fixed point to,
+// and `friday source update` skips both instead of trying.
+func CheckoutRef(dir, ref string) error {
+	if err := ValidateRef(ref); err != nil {
+		return err
+	}
+	if isRemoteBranch(dir, ref) {
+		return run("-C", dir, "checkout", ref)
+	}
+	return run("-C", dir, "checkout", "--detach", ref)
+}
+
+// isRemoteBranch reports whether ref names a branch on origin.
+func isRemoteBranch(dir, ref string) bool {
+	return command("-C", dir, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+ref).Run() == nil
+}
+
+// HeadSHA returns dir's checked-out commit sha, whether HEAD is attached to
+// a branch or detached — `source list`'s sha column wants the commit
+// identity regardless, unlike CurrentRef's branch-name preference.
+func HeadSHA(dir string) string {
+	sha, err := output("-C", dir, "rev-parse", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return sha
+}
+
+// CurrentRef reports dir's checked-out branch name, or its commit sha when
+// detached — a pinned tag or sha ref never resolves back to a branch name.
+func CurrentRef(dir string) string {
+	if branch, err := output("-C", dir, "rev-parse", "--abbrev-ref", "HEAD"); err == nil && branch != "HEAD" {
+		return branch
+	}
+	return HeadSHA(dir)
+}
+
 // Status returns short-form status output for dir.
 func Status(dir string) (string, error) {
 	return output("-C", dir, "status", "--short", "--branch")
 }
 
+// command builds every git invocation friday makes, with the set of allowed
+// transports pinned to urlSchemes. ValidateURL is the first line of defence;
+// this is the one that still holds if a future callsite skips it, so it is
+// applied to all invocations rather than to the network subcommands only.
+//
+// It has to be the environment variable, not `-c protocol.ext.allow=never`:
+// GIT_ALLOW_PROTOCOL overrides protocol.*.allow config outright, so a machine
+// that already exports a relaxed list for unrelated tooling defeats the config
+// form completely — measured, with ext:: going on to execute its command.
+// Setting the variable ourselves overrides both the ambient value and any
+// system/global config, and it is inherited by submodule fetches too.
+//
+// args are reported verbatim in errors so a failure names the command the
+// caller asked for.
+func command(args ...string) *exec.Cmd {
+	cmd := exec.Command("git", args...)
+	// A later duplicate wins in exec, so this overrides any inherited value.
+	cmd.Env = append(os.Environ(), "GIT_ALLOW_PROTOCOL="+strings.Join(urlSchemes, ":"))
+	return cmd
+}
+
 func run(args ...string) error {
-	out, err := exec.Command("git", args...).CombinedOutput()
+	out, err := command(args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %s: %v\n%s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
@@ -196,7 +316,7 @@ func run(args ...string) error {
 }
 
 func output(args ...string) (string, error) {
-	out, err := exec.Command("git", args...).CombinedOutput()
+	out, err := command(args...).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %v\n%s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}

@@ -1,7 +1,9 @@
 package cli
 
 import (
-	"flag"
+	"context"
+
+	ucli "github.com/urfave/cli/v3"
 
 	"github.com/zhivko-kocev/friday/internal/config"
 	"github.com/zhivko-kocev/friday/internal/engine"
@@ -14,31 +16,38 @@ type pushOpts struct {
 	only                                   string
 }
 
-func pushFlags(o *pushOpts) *flag.FlagSet {
-	fs := flag.NewFlagSet("push", flag.ContinueOnError)
-	fs.BoolVar(&o.dryRun, "dry-run", false, "show what would change without writing")
-	fs.BoolVar(&o.force, "force", false, "overwrite without prompting on drift")
-	fs.BoolVar(&o.noInteractive, "no-interactive", false, "don't prompt; treat conflicts as skip")
-	fs.BoolVar(&o.showDiff, "diff", false, "show line diff for each change")
-	fs.StringVar(&o.only, "only", "", "push only changes sourced from files matching this store-relative glob")
-	return fs
-}
-
-// cmdPush — apply rules from the user store into installed agent dirs.
-func cmdPush(args []string) int {
-	var o pushOpts
-	fs := pushFlags(&o)
-	adapters, err := parseInterleaved(fs, args)
-	if err != nil {
-		return 1
+// newPushCommand applies rules from the user store into installed agent
+// dirs.
+func newPushCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:          "push",
+		Category:      "advanced",
+		Usage:         "one-way sync: store → installed agents",
+		ArgsUsage:     "[adapter...]",
+		ShellComplete: completeAdapters,
+		Flags: []ucli.Flag{
+			&ucli.BoolFlag{Name: "dry-run", Usage: "show what would change without writing"},
+			&ucli.BoolFlag{Name: "force", Usage: "overwrite without prompting on drift"},
+			&ucli.BoolFlag{Name: "no-interactive", Usage: "don't prompt; treat conflicts as skip"},
+			&ucli.BoolFlag{Name: "diff", Usage: "show line diff for each change"},
+			&ucli.StringFlag{Name: "only", Usage: "push only changes sourced from files matching this store-relative glob"},
+		},
+		Action: func(_ context.Context, cmd *ucli.Command) error {
+			cfg, err := loadUserOrDefault()
+			if err != nil {
+				output.Err("%v", err)
+				return ucli.Exit("", 1)
+			}
+			code := runPush(cfg, cmd.Args().Slice(), pushOpts{
+				dryRun:        cmd.Bool("dry-run"),
+				force:         cmd.Bool("force"),
+				noInteractive: cmd.Bool("no-interactive"),
+				showDiff:      cmd.Bool("diff"),
+				only:          cmd.String("only"),
+			})
+			return exitFromCode(code)
+		},
 	}
-
-	cfg, err := loadUserOrDefault()
-	if err != nil {
-		output.Err("%v", err)
-		return 1
-	}
-	return runPush(cfg, adapters, o)
 }
 
 // runPush executes the push phase against the given adapters (empty = every

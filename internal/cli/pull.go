@@ -2,10 +2,11 @@ package cli
 
 import (
 	"bufio"
-	"flag"
+	"context"
 	"fmt"
-	"os"
 	"strings"
+
+	ucli "github.com/urfave/cli/v3"
 
 	"github.com/zhivko-kocev/friday/internal/config"
 	"github.com/zhivko-kocev/friday/internal/engine"
@@ -13,48 +14,48 @@ import (
 	"github.com/zhivko-kocev/friday/internal/ui"
 )
 
-type pullOpts struct {
-	dryRun, all, noInteractive, discover bool
-}
-
-func pullFlags(o *pullOpts) *flag.FlagSet {
-	fs := flag.NewFlagSet("pull", flag.ContinueOnError)
-	fs.BoolVar(&o.dryRun, "dry-run", false, "show what would change without writing")
-	fs.BoolVar(&o.all, "all", false, "auto-apply every adapter (skip the prompt)")
-	fs.BoolVar(&o.noInteractive, "no-interactive", false, "skip prompts; legacy batch flow")
-	fs.BoolVar(&o.discover, "discover", false, "walk the agent dir and capture files a normal pull can't see (bootstrap/enrich the store)")
-	return fs
-}
-
-// cmdPull captures edits from agent dirs back into ~/.friday.
+// newPullCommand captures edits from agent dirs back into ~/.friday.
 //
 // `friday pull`           → walk every installed agent; show diff; ask apply / skip / quit
 // `friday pull claude`    → same per-adapter flow, restricted to the named adapters
 // `friday pull --no-interactive` → batch flow, no prompts at all
-func cmdPull(args []string) int {
-	var o pullOpts
-	fs := pullFlags(&o)
-	// --force was the old name for --all on pull; keep it working but nudge,
-	// since --force means "overwrite on drift" on every other command.
-	args = renameFlag(args, "force", "all", "note: --force is deprecated on pull; use --all")
-	adapters, err := parseInterleaved(fs, args)
-	if err != nil {
-		return 1
-	}
+func newPullCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:          "pull",
+		Category:      "advanced",
+		Usage:         "one-way sync: agent edits → store (--discover finds new files)",
+		ArgsUsage:     "[adapter...]",
+		ShellComplete: completeAdapters,
+		Flags: []ucli.Flag{
+			&ucli.BoolFlag{Name: "dry-run", Usage: "show what would change without writing"},
+			&ucli.BoolFlag{Name: "all", Usage: "auto-apply every adapter (skip the prompt)"},
+			&ucli.BoolFlag{Name: "no-interactive", Usage: "skip prompts; legacy batch flow"},
+			&ucli.BoolFlag{Name: "discover", Usage: "walk the agent dir and capture files a normal pull can't see (bootstrap/enrich the store)"},
+		},
+		Action: func(_ context.Context, cmd *ucli.Command) error {
+			adapters := cmd.Args().Slice()
+			dryRun := cmd.Bool("dry-run")
+			all := cmd.Bool("all")
+			noInteractive := cmd.Bool("no-interactive")
 
-	cfg, err := loadUserOrDefault()
-	if err != nil {
-		output.Err("%v", err)
-		return 1
-	}
+			cfg, err := loadUserOrDefault()
+			if err != nil {
+				output.Err("%v", err)
+				return ucli.Exit("", 1)
+			}
 
-	if o.discover {
-		return pullDiscover(cfg, adapters, o.dryRun, o.all, o.noInteractive)
+			var code int
+			switch {
+			case cmd.Bool("discover"):
+				code = pullDiscover(cfg, adapters, dryRun, all, noInteractive)
+			case noInteractive:
+				code = pullBatch(cfg, adapters, dryRun, all)
+			default:
+				code = pullPerAdapter(cfg, adapters, dryRun, all)
+			}
+			return exitFromCode(code)
+		},
 	}
-	if o.noInteractive {
-		return pullBatch(cfg, adapters, o.dryRun, o.all)
-	}
-	return pullPerAdapter(cfg, adapters, o.dryRun, o.all)
 }
 
 // pullDiscover is `pull --discover`: reverse-expand each adapter's rules to
@@ -135,7 +136,6 @@ func pullPerAdapter(cfg *config.Config, adapters []string, dryRun, force bool) i
 		return 1
 	}
 
-	reader := bufio.NewReader(os.Stdin)
 	var seen []engine.Change
 
 	// One shared provenance map across every per-adapter Pull call: an edit
@@ -158,22 +158,28 @@ func pullPerAdapter(cfg *config.Config, adapters []string, dryRun, force bool) i
 			continue
 		}
 
-		// Always render with diffs; the whole point of this flow is the user
-		// sees what they're approving before saying yes.
-		report(planned, true, true)
+		// The plan is the prompt's evidence — answering "a" writes the
+		// agent's version over the store — so when we are about to ask, it
+		// prints even under --quiet. Always with diffs: the whole point of
+		// this flow is that the user sees what they're approving.
+		choice := "a"
+		show := func() { report(planned, true, true) }
+		if dryRun || force {
+			show()
+		} else {
+			output.WithPromptContext(func() {
+				show()
+				if ui.Interactive() {
+					choice = promptApplyChoiceTUI(name)
+				} else {
+					choice = promptApplyChoice(stdin)
+				}
+			})
+		}
 
 		if dryRun {
 			seen = append(seen, planned...)
 			continue
-		}
-
-		choice := "a"
-		if !force {
-			if ui.Interactive() {
-				choice = promptApplyChoiceTUI(name)
-			} else {
-				choice = promptApplyChoice(reader)
-			}
 		}
 		switch choice {
 		case "a":

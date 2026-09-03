@@ -52,14 +52,36 @@ func (a Action) String() string {
 
 // Change is a single planned (or applied) write — or a no-op explaining why.
 type Change struct {
-	Adapter    string
-	Direction  Direction
-	RuleIndex  int      // index into the adapter's Rules that produced this change
-	Sources    []string // store-relative paths for push; target-relative for pull
-	SrcAbs     string   // absolute path of the single source file ("" for concat)
-	SrcContent []byte   // raw on-disk bytes of SrcAbs, pre-transform — baseline material
-	DestPath   string   // absolute path that would be written (or was)
-	DestRel    string   // human-friendly relative path for display
+	Adapter   string
+	Direction Direction
+	RuleIndex int      // index into the adapter's Rules that produced this change
+	Sources   []string // store-relative paths for push; target-relative for pull
+	// SourceAbs is the absolute path of each Sources entry, positionally:
+	// len(SourceAbs) == len(Sources) on every push-direction change, with an
+	// empty string where the entry names a pattern that matched no file.
+	// Sources stays store-relative so the default push/pull/status output is
+	// unified across sources (D10); SourceAbs is the only thing that lets a
+	// caller say which root an entry actually came from. Pull-direction
+	// changes leave it nil: DestPath already names the resolved store root.
+	SourceAbs []string
+	// Shadowed lists the absolute paths of lower-precedence copies a
+	// single-winner rule resolved past (lowest precedence first) — a
+	// provenance list, not a contribution list, which is why it is not part
+	// of Sources/SourceAbs. Nil unless more than one root held the file.
+	Shadowed []string
+	// Root names the root whose copy a single-winner rule resolved to, so
+	// --verbose can say which source rendered a file. Set only when more than
+	// one root is configured: on a single-source store there is nothing to
+	// disambiguate, and a concatenate entry file lists every contributing
+	// source in Sources already. Without it, --verbose could only ever tag a
+	// change carrying two or more Sources — which merge-json, merge-toml, copy
+	// and render never do, leaving the majority of files indistinguishable
+	// from a single-source store.
+	Root       string
+	SrcAbs     string // absolute path of the single resolved source ("" for concatenate)
+	SrcContent []byte // raw on-disk bytes of SrcAbs, pre-transform — baseline material
+	DestPath   string // absolute path that would be written (or was)
+	DestRel    string // human-friendly relative path for display
 	Action     Action
 	OldContent []byte
 	NewContent []byte
@@ -72,21 +94,28 @@ type Change struct {
 	mergedPush     bool   // ConflictUseMerged on push: NewContent is the merge result
 	storeWriteBack []byte // push-merge on an invertible rule: content for SrcAbs
 	staleTarget    bool   // pull downgraded because the target never drifted
-	// driftExempt marks a change against a co-owned file (merge-json): the
-	// write only touches friday's own keys and preserves the rest, so it needs
-	// no whole-file drift baseline and never surfaces as a conflict. Set by
-	// planMergeJSON; honored in resolveConflict and apply.
+	// driftExempt marks a change against a co-owned file (merge-json,
+	// merge-toml, and the render rules that land through them): the write
+	// only touches friday's own keys and preserves the rest, so it needs no
+	// whole-file drift baseline and never surfaces as a conflict. Honored in
+	// resolveConflict and apply. It says nothing about consent — see
+	// hookWrite.
 	driftExempt bool
 	// mergeSource is the store content a confirmer describes before the write
-	// lands (the merge-json blob, or the executable hook plugin's body). Set by
-	// planMergeJSON and by planTokenized for confirm-gated copies; never rendered
-	// by the report.
+	// lands (the merged-in blob, or the executable hook plugin's body); it is
+	// also what apply records as friday's owned state. Never rendered by the
+	// report.
 	mergeSource []byte
-	// confirmWrite gates a NON-drift-exempt write behind the confirmer the same
-	// way driftExempt does — used for a copy rule that drops an executable hook
-	// plugin (OpenCode/pi) which auto-activates the moment it lands, so it must
-	// not be written unattended. Set by planTokenized from Rule.ConfirmHook.
-	confirmWrite bool
+	// hookWrite gates a write behind the confirmer because it installs
+	// executable hook wiring: a merge whose store source lives under hooks/,
+	// a merge whose payload declares a hook-owning key however it got there
+	// (see declaresHookWiring — a settings/<adapter>.json passthrough reaches
+	// the same settings.json), or a copy rule with confirm_hook (an OpenCode
+	// plugin, an oh-my-pi extension) the agent auto-activates the moment it
+	// lands. Keyed on what is being installed, never on the merge strategy —
+	// an mcp.yaml server list or a defaults.yaml model setting is declarative
+	// config and must still land in a --no-interactive push.
+	hookWrite bool
 }
 
 // ConflictChoice is the engine-level outcome of a drift resolution prompt.
@@ -153,11 +182,14 @@ type WriteConfirmInfo struct {
 	Source   []byte
 }
 
-// ConfirmWriter approves a hook write (a merge-json co-owned write or an
-// executable-hook-plugin install). Returning false skips it. A nil confirmer
-// (non-interactive mode) skips every such write: friday never silently installs
-// hook code, the safe default when a store may be a clone of someone else's
-// repo. --force bypasses the confirmer.
+// ConfirmWriter approves a write that installs executable hook wiring (a merge
+// sourced under hooks/, a merge whose payload declares a hook-owning key, or a
+// confirm_hook plugin install). Returning false skips it. A nil confirmer
+// skips every such write: friday never silently installs hook code, the safe
+// default when a store may be a clone of someone else's repo. --force
+// bypasses the confirmer. Declarative config — an mcp.yaml server list, a
+// permissions.yaml policy, a defaults.yaml model setting — is NOT gated and
+// lands unattended, however it is merged.
 type ConfirmWriter func(WriteConfirmInfo) bool
 
 // Options controls a single Push/Pull/Status invocation.
@@ -171,21 +203,22 @@ type Options struct {
 	// BaseLookup resolves a drift baseline hash to its content (snapshot
 	// blob store). Nil disables merge-base recovery.
 	BaseLookup func(hash string) ([]byte, bool)
-	// ConfirmWrite gates hook writes — merge-json hook wiring and executable
-	// hook-plugin installs (confirm_hook copies). Nil skips them — friday never
-	// installs hook code unattended. Ignored under --force (Force) and dry runs.
+	// ConfirmWrite gates writes that install executable hook wiring — a merge
+	// from a hooks/ store source, or a confirm_hook plugin install. Nil skips
+	// them, and only them: friday never installs hook code unattended, but a
+	// --no-interactive push still renders every declarative surface. Ignored
+	// under --force (Force) and dry runs.
 	ConfirmWrite ConfirmWriter
 	// Warnf, when non-nil, receives non-fatal advisories the engine would
 	// otherwise print through internal/output (currently only a drift-store
-	// save failure after a successful apply). The CLI leaves it nil and keeps
-	// printing exactly as before; the interactive control room sets it so
-	// nothing writes to stdout while it owns the alt-screen.
+	// save failure after a successful apply). The CLI leaves it nil and
+	// keeps printing exactly as before; a future non-stdout frontend can
+	// set it to redirect that one advisory away from stdout.
 	Warnf func(format string, args ...any)
-	// Abort, when non-nil, cancels an in-progress apply: once it is closed (or
-	// receives), the engine stops before the next change and returns what it has
-	// already written, still persisting the drift store. Lets the control room's
-	// Ctrl-C halt a long apply, not just fast-skip conflicts. Nil = no
-	// cancellation (the CLI's behavior, unchanged).
+	// Abort, when non-nil, cancels an in-progress apply: once it is closed
+	// (or receives), the engine stops before the next change and returns
+	// what it has already written, still persisting the drift store. Nil =
+	// no cancellation (the CLI's default behavior).
 	Abort <-chan struct{}
 	// PulledStorePaths accumulates the store files captured by pull-direction
 	// writes over one logical pull operation. runWith applies each adapter
@@ -198,6 +231,13 @@ type Options struct {
 	// (push, import, compile, and every path that doesn't opt in) disables the
 	// check entirely — behavior is then exactly as before.
 	PulledStorePaths map[string]bool
+	// ToSource names which configured source a captured import edit lands in
+	// when the file doesn't already exist in any source (a genuinely new
+	// capture). Ignored once an owner exists — an edit to an already-tracked
+	// file always routes back to the source that already holds it, regardless
+	// of ToSource. Empty means the primary. Import-only; planPull's matches
+	// always have a pre-existing owner, so it never consults this.
+	ToSource string
 	// driftPath overrides where baselines are read and written. Compile sets
 	// it to a throwaway file so temp-store runs never touch the user's real
 	// drift state. Empty means drift.DefaultPath().

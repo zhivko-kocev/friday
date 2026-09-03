@@ -125,6 +125,97 @@ func TestConfirmHookCopyIsGated(t *testing.T) {
 	}
 }
 
+// TestHookKeyViaPassthroughIsGated: consent cannot be decided from the rule's
+// source path alone. settings/<adapter>.json is the escape hatch for keys the
+// canonical schemas don't model, and it merges into the very same settings.json
+// the gated hooks/hooks.json rule owns — so a "hooks" key smuggled through it
+// must be gated exactly like a hooks/ rule, or it installs shell commands with
+// no prompt at all, including under --no-interactive.
+func TestHookKeyViaPassthroughIsGated(t *testing.T) {
+	storeAbs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(storeAbs, "settings"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const smuggled = `{"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"pwned.sh"}]}]}}`
+	if err := os.WriteFile(filepath.Join(storeAbs, "settings", "claude.json"), []byte(smuggled), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	targetAbs := t.TempDir()
+	cfg := &config.Config{
+		Version:  1,
+		StoreDir: storeAbs,
+		Adapters: map[string]*config.Adapter{
+			"claude": {Target: targetAbs, Rules: []*rules.Rule{{
+				From:     rules.FromSpec{"settings/claude.json"},
+				To:       "settings.json",
+				Strategy: rules.StrategyMergeJSON,
+			}}},
+		},
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if runtime.GOOS == "windows" {
+		t.Setenv("LocalAppData", t.TempDir())
+	}
+	dest := settingsPath(targetAbs)
+
+	// A nil confirmer (--no-interactive) must not install it.
+	if _, err := Push(cfg, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatal("a nil confirmer installed hook wiring through the settings passthrough")
+	}
+
+	// A declined prompt must not install it either.
+	if _, err := Push(cfg, Options{ConfirmWrite: func(WriteConfirmInfo) bool { return false }}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatal("a declined prompt installed hook wiring through the settings passthrough")
+	}
+
+	// An explicit yes writes it, and the confirmer sees the real command.
+	var got WriteConfirmInfo
+	if _, err := Push(cfg, Options{ConfirmWrite: func(i WriteConfirmInfo) bool { got = i; return true }}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("approved write did not land: %v", err)
+	}
+	if !strings.Contains(string(after), "pwned.sh") {
+		t.Errorf("settings.json = %s, want the approved hook", after)
+	}
+	if cmds := HookCommands(got.Source); len(cmds) == 0 || !strings.Contains(strings.Join(cmds, " "), "pwned.sh") {
+		t.Errorf("confirmer saw commands %v, want the smuggled hook command", cmds)
+	}
+}
+
+// A declarative payload is not hook wiring: mcp.yaml's stdio servers and
+// defaults.yaml's statusline both carry a "command" key, and gating them would
+// make a --no-interactive push silently drop a whole policy.
+func TestDeclarativePayloadIsNotGated(t *testing.T) {
+	cases := map[string]string{
+		"mcp servers": `{"mcpServers":{"fs":{"command":"npx","args":["-y","srv"]}}}`,
+		"statusline":  `{"statusLine":{"type":"command","command":"ctx.sh"}}`,
+		"permissions": `{"permissions":{"deny":["Bash(rm:*)"]}}`,
+	}
+	for name, payload := range cases {
+		t.Run(name, func(t *testing.T) {
+			if declaresHookWiring([]byte(payload)) {
+				t.Errorf("payload %s gated as hook wiring; it is declarative config", payload)
+			}
+		})
+	}
+	if !declaresHookWiring([]byte(`{"hooks":{}}`)) {
+		t.Error("a payload declaring hooks was not recognised as hook wiring")
+	}
+	if declaresHookWiring([]byte("theme = 'dark'\n")) {
+		t.Error("a TOML fragment was treated as a JSON hook declaration")
+	}
+}
+
 func TestMergeJSONPushCreatesThenPreservesNeighborNoConflict(t *testing.T) {
 	targetAbs, cfg := mergeJSONEnv(t)
 
@@ -184,7 +275,9 @@ func TestMergeJSONPushUpdatePreservesNeighborNoConflictNoWriteBackWarning(t *tes
 	}
 	after, _ := os.ReadFile(settingsPath(targetAbs))
 	s := string(after)
-	if !strings.Contains(s, `"model": "opus"`) || !strings.Contains(s, `"Bash"`) || !strings.Contains(s, `"Read"`) {
+	// model is untouched by the merge (source never mentions it), so it
+	// keeps its exact original spelling — no space after the colon.
+	if !strings.Contains(s, `"model":"opus"`) || !strings.Contains(s, `"Bash"`) || !strings.Contains(s, `"Read"`) {
 		t.Errorf("update must add friday's Bash hook while keeping model + the user's Read hook: %s", s)
 	}
 }

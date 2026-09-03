@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -23,6 +24,7 @@ import (
 	"github.com/zhivko-kocev/friday/internal/output"
 	"github.com/zhivko-kocev/friday/internal/presets"
 	"github.com/zhivko-kocev/friday/internal/rules"
+	"github.com/zhivko-kocev/friday/internal/source"
 	"github.com/zhivko-kocev/friday/internal/ui"
 )
 
@@ -35,30 +37,34 @@ type Options struct {
 }
 
 // Item is one selectable piece of the store: the entry file, a single rule /
-// agent / command / standard / connector file, a whole skill directory, or
-// the hooks tree.
+// agent / command file, a whole skill directory, or the hooks tree.
 type Item struct {
-	Category string   // core | rules | agents | commands | standards | connectors | skills | hooks
+	Category string   // core | rules | agents | commands | skills | hooks
 	Name     string   // display name (file stem or skill dir)
 	Patterns []string // store-relative from-patterns selecting the item
 	Probe    string   // a real store-relative file, used to test rule coverage
 }
 
 // catalogSpecs drive per-file item discovery; skills are handled separately
-// (one item per skill directory), hooks as a single item.
+// (one item per skill directory), hooks as a single item. standards/ and
+// connectors/ are deliberately absent: no adapter maps them — they stay in
+// the store and are reached by reference through ${CLAUDE_PLUGIN_ROOT} — so
+// listing them here would only ever offer a choice that reports "no project
+// mapping for it".
 var catalogSpecs = []struct{ category, glob string }{
 	{"rules", "rules/*.md"},
 	{"agents", "agents/*.md"},
 	{"commands", "commands/*.md"},
-	{"standards", "standards/*.md"},
-	{"connectors", "connectors/*.md"},
 }
 
-// Catalog enumerates what the store offers, in stable display order.
-func Catalog(storeDir string) ([]Item, error) {
+// catalog enumerates what the store offers, in stable display order, across
+// every composed root — a rule pack layered in via `sources:` is store content
+// like any other, and expanding only the primary made it invisible to the
+// picker even though push/pull compose it.
+func catalog(roots []rules.Root) ([]Item, error) {
 	var items []Item
 	for _, v := range presets.EntryFiles {
-		matches, err := rules.Expand(storeDir, v)
+		matches, _, err := rules.ExpandAll(roots, v)
 		if err != nil {
 			return nil, err
 		}
@@ -68,52 +74,199 @@ func Catalog(storeDir string) ([]Item, error) {
 		}
 	}
 	for _, spec := range catalogSpecs {
-		matches, err := rules.Expand(storeDir, spec.glob)
+		matches, _, err := rules.ExpandAll(roots, spec.glob)
 		if err != nil {
 			return nil, err
 		}
 		for _, m := range matches {
-			stem := strings.TrimSuffix(path.Base(m), path.Ext(m))
-			items = append(items, Item{Category: spec.category, Name: stem, Patterns: []string{m}, Probe: m})
+			stem := strings.TrimSuffix(path.Base(m.Rel), path.Ext(m.Rel))
+			items = append(items, Item{Category: spec.category, Name: stem, Patterns: []string{m.Rel}, Probe: m.Rel})
 		}
 	}
-	skillDirs, err := os.ReadDir(filepath.Join(storeDir, "skills"))
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	for _, e := range skillDirs {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		pat := "skills/" + e.Name() + "/**/*"
-		matches, err := rules.Expand(storeDir, pat)
+	for _, name := range skillNames(roots) {
+		pat := "skills/" + name + "/**/*"
+		matches, _, err := rules.ExpandAll(roots, pat)
 		if err != nil {
 			return nil, err
 		}
 		if len(matches) == 0 {
 			continue
 		}
-		items = append(items, Item{Category: "skills", Name: e.Name(), Patterns: []string{pat}, Probe: matches[0]})
+		items = append(items, Item{Category: "skills", Name: name, Patterns: []string{pat}, Probe: matches[0].Rel})
 	}
-	if hooks, err := rules.Expand(storeDir, "hooks/**/*"); err != nil {
+	if hooks, _, err := rules.ExpandAll(roots, "hooks/**/*"); err != nil {
 		return nil, err
 	} else if len(hooks) > 0 {
-		items = append(items, Item{Category: "hooks", Name: "hooks", Patterns: []string{"hooks/**/*"}, Probe: hooks[0]})
+		items = append(items, Item{Category: "hooks", Name: "hooks", Patterns: []string{"hooks/**/*"}, Probe: hooks[0].Rel})
 	}
 	return items, nil
 }
 
-// FilterAdapter narrows the preset's project rules to the selected items.
-// Concatenate rules get their from-list rebuilt from the selected files (the
-// output must contain exactly the selection). Copy rules keep their original
-// patterns — narrowing them would move the {relpath} anchor and mangle
-// destination paths — and the returned `only` globs filter their planned
-// changes down to the selection instead. Rules covering nothing are dropped;
-// items the preset has no mapping for come back as skipped.
-func FilterAdapter(p presets.Preset, selected []Item) (ad *config.Adapter, only []string, skipped []Item) {
-	ad = &config.Adapter{Target: p.ProjectTarget}
+// skillNames lists every skill directory across the composed roots, sorted
+// and de-duplicated so a skill a source and the primary both carry is offered
+// once. Dot-directories are store plumbing, never content.
+func skillNames(roots []rules.Root) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, root := range roots {
+		entries, err := os.ReadDir(filepath.Join(root.Dir, "skills"))
+		if err != nil {
+			continue // a root without a skills/ tree contributes nothing
+		}
+		for _, e := range entries {
+			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || seen[e.Name()] {
+				continue
+			}
+			seen[e.Name()] = true
+			names = append(names, e.Name())
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// loadUserManifest loads the user's own friday.yaml, returning a nil config
+// when the store has none — a cloned store without a manifest is normal, an
+// unparseable one is not. Loaded once per run and threaded through, so the
+// agent picker and the resolution that follows it can never disagree about
+// what the manifest says.
+func loadUserManifest() (*config.Config, error) {
+	cfg, err := config.LoadUser()
+	if errors.Is(err, config.ErrNoManifest) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// projectAdapter renders agent's project-scope shape, or nil when the name
+// has no project-scope story anywhere. A manifest adapter wins over the
+// built-in preset — an adapter the user added or customized by hand can be
+// `friday setup`-ed too (D17) — but only when it actually carries a project
+// mapping: `friday init` seeds every adapter with user-scope target/rules
+// only, so treating a declared adapter as owning its project scope leaves
+// setup and promote dead for every store that has ever been init-ed.
+func projectAdapter(manifest *config.Config, agent string) *config.Adapter {
+	if manifest != nil {
+		if ad, ok := manifest.Adapters[agent]; ok && len(ad.ProjectRules) > 0 {
+			return &config.Adapter{Target: ad.ProjectTarget, Rules: ad.ProjectRules}
+		}
+	}
+	if p, ok := presets.Get(agent); ok && len(p.ProjectRules) > 0 {
+		return p.ProjectAdapter()
+	}
+	return nil
+}
+
+// resolveProjectAdapter resolves agent's project-scope adapter and proves
+// every destination it maps stays inside the project at cwd.
+func resolveProjectAdapter(manifest *config.Config, agent, cwd string) (*config.Adapter, error) {
+	ad := projectAdapter(manifest, agent)
+	if ad == nil {
+		return nil, unmappedAgentError(manifest, agent)
+	}
+	if err := checkProjectContainment(ad, cwd); err != nil {
+		return nil, err
+	}
+	return ad, nil
+}
+
+// unmappedAgentError tells a known-but-unmapped agent apart from a typo, so
+// the user knows whether to add project rules or fix the name.
+func unmappedAgentError(manifest *config.Config, agent string) error {
+	declared := false
+	if manifest != nil {
+		_, declared = manifest.Adapters[agent]
+	}
+	if _, known := presets.Get(agent); declared || known {
+		return fmt.Errorf("adapter %q has no project-scope mapping — give it project_target/project_rules in %s", agent, config.ManifestName)
+	}
+	return fmt.Errorf("unknown agent %q (available: %s)", agent, strings.Join(projectAgentNames(manifest), ", "))
+}
+
+// tokenRun matches any {token} in a `to` template. Tokens expand to
+// store-relative path segments — never absolute, never containing ".." — so
+// substituting a neutral segment makes the containment check exact without
+// duplicating the token vocabulary.
+var tokenRun = regexp.MustCompile(`\{[a-z]+\}`)
+
+// checkProjectContainment rejects a project adapter that would write outside
+// the project. The mapping can come from a friday.yaml in a store that is
+// someone else's clone, while setup runs inside the user's own repo: an
+// absolute or ~-anchored project_target, or a `to` that walks out with
+// "..", would turn `friday setup` into a write into $HOME. An escape is a
+// hard error rather than a silent clamp — a rule that cannot be honored as
+// written must not be honored at all.
+func checkProjectContainment(ad *config.Adapter, cwd string) error {
+	if filepath.IsAbs(ad.Target) || strings.HasPrefix(ad.Target, "~") {
+		return fmt.Errorf("project target %q must be relative to the project dir %s", ad.Target, cwd)
+	}
+	root := filepath.Join(cwd, filepath.FromSlash(ad.Target))
+	if !withinDir(cwd, root) {
+		return fmt.Errorf("project target %q escapes the project dir %s", ad.Target, cwd)
+	}
+	for _, r := range ad.Rules {
+		dest := filepath.Join(root, filepath.FromSlash(tokenRun.ReplaceAllString(r.To, "x")))
+		if !withinDir(cwd, dest) {
+			return fmt.Errorf("rule destination %q escapes the project dir %s", r.To, cwd)
+		}
+	}
+	return nil
+}
+
+func withinDir(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// projectAgentNames lists every agent friday setup/promote can offer: the
+// names that actually resolve to a project mapping, taken from the user's
+// own friday.yaml unioned with the built-in presets. A name with no project
+// scope — the shared `agents` adapter, or an init-seeded adapter no preset
+// covers — is left out, because offering a choice that always fails is
+// worse than a shorter list.
+func projectAgentNames(manifest *config.Config) []string {
+	seen := make(map[string]bool)
+	var names []string
+	add := func(name string) {
+		if seen[name] || projectAdapter(manifest, name) == nil {
+			return
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	if manifest != nil {
+		for name := range manifest.Adapters {
+			add(name)
+		}
+	}
+	for _, name := range presets.Names() {
+		add(name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// FilterAdapter narrows the resolved project adapter's rules to the
+// selected items. p is already in "project" shape — its Target/Rules hold
+// the project mapping (see resolveProjectAdapter/ProjectAdapter), not
+// ProjectTarget/ProjectRules — matching what projectConfig/ItemStates also
+// expect. Concatenate rules get their from-list rebuilt from the selected
+// files (the output must contain exactly the selection). Copy rules keep
+// their original patterns — narrowing them would move the {relpath} anchor
+// and mangle destination paths — and the returned `only` globs filter
+// their planned changes down to the selection instead. Rules covering
+// nothing are dropped; items the adapter has no mapping for come back as
+// skipped.
+func filterAdapter(p *config.Adapter, selected []Item) (ad *config.Adapter, only []string, skipped []Item) {
+	ad = &config.Adapter{Target: p.Target}
 	used := make([]bool, len(selected))
-	for _, r := range p.ProjectRules {
+	for _, r := range p.Rules {
 		var covered []Item
 		for i, it := range selected {
 			if ruleCovers(r, it) {
@@ -149,7 +302,7 @@ func FilterAdapter(p presets.Preset, selected []Item) (ad *config.Adapter, only 
 
 func ruleCovers(r *rules.Rule, it Item) bool {
 	for _, pat := range r.From {
-		if slices.Contains(it.Patterns, pat) || rules.Match(pat, it.Probe) {
+		if slices.Contains(it.Patterns, pat) || rules.Matches(pat, it.Probe) {
 			return true
 		}
 		// An item that selects a whole tree (e.g. hooks with "hooks/**/*")
@@ -158,7 +311,7 @@ func ruleCovers(r *rules.Rule, it Item) bool {
 		// "hooks/hooks.json" is dropped whenever another file under hooks/ sorts
 		// ahead of it and becomes the probe.
 		for _, ip := range it.Patterns {
-			if rules.Match(ip, pat) {
+			if rules.Matches(ip, pat) {
 				return true
 			}
 		}
@@ -178,6 +331,10 @@ func Run(prompt io.Reader, cwd string, opts Options, onConflict engine.ConflictR
 	if _, err := os.Stat(storeDir); err != nil {
 		return nil, fmt.Errorf("no user store at %s — run `friday init` first", storeDir)
 	}
+	manifest, err := loadUserManifest()
+	if err != nil {
+		return nil, err
+	}
 
 	reader := bufio.NewReader(prompt)
 
@@ -185,19 +342,20 @@ func Run(prompt io.Reader, cwd string, opts Options, onConflict engine.ConflictR
 
 	agent := opts.Agent
 	if agent == "" {
-		if agent, err = selectAgent(reader, presets.Names(), tui); err != nil {
+		if agent, err = selectAgent(reader, projectAgentNames(manifest), tui); err != nil {
 			return nil, err
 		}
 	}
-	preset, ok := presets.Get(agent)
-	if !ok {
-		return nil, fmt.Errorf("unknown agent %q (available: %s)", agent, strings.Join(presets.Names(), ", "))
-	}
-	if len(preset.ProjectRules) == 0 {
-		return nil, fmt.Errorf("preset %q has no project-scope mapping", agent)
+	ad, err := resolveProjectAdapter(manifest, agent, cwd)
+	if err != nil {
+		return nil, err
 	}
 
-	items, err := Catalog(storeDir)
+	roots, err := composedRoots(storeDir, manifestSources(manifest))
+	if err != nil {
+		return nil, err
+	}
+	items, err := catalog(roots)
 	if err != nil {
 		return nil, err
 	}
@@ -205,13 +363,13 @@ func Run(prompt io.Reader, cwd string, opts Options, onConflict engine.ConflictR
 		return nil, fmt.Errorf("store at %s has nothing to apply — add core.md, rules/, skills/, ...", storeDir)
 	}
 
-	states := ItemStates(preset, agent, items, storeDir, cwd)
+	states := itemStates(ad, agent, items, storeDir, cwd, manifestSources(manifest))
 	selected, err := selectItems(reader, items, states, tui)
 	if err != nil {
 		return nil, err
 	}
 
-	cfg, only, skipped, err := Resolve(agent, selected, storeDir, cwd)
+	cfg, only, skipped, err := resolve(agent, ad, selected, storeDir, cwd, manifestSources(manifest))
 	// Surface unmapped items BEFORE pushing, so these notices precede any
 	// interactive conflict prompts and the writes themselves.
 	for _, it := range skipped {
@@ -223,30 +381,50 @@ func Run(prompt io.Reader, cwd string, opts Options, onConflict engine.ConflictR
 	return engine.Push(cfg, engine.Options{DryRun: opts.DryRun, Force: opts.Force, OnConflict: onConflict, ConfirmWrite: confirmWrite, Only: only})
 }
 
-// Resolve narrows the preset to the selected items and builds the project-scoped
-// config the caller then pushes into. It is the non-pushing core shared by Run
-// and the control room: it returns the `only` globs and the items no rule mapped
-// (skipped) so the caller controls conflict resolution AND the order in which it
-// reports skips relative to the push. Does not touch disk.
-func Resolve(agent string, selected []Item, storeDir, cwd string) (cfg *config.Config, only []string, skipped []Item, err error) {
-	preset, ok := presets.Get(agent)
-	if !ok {
-		return nil, nil, nil, fmt.Errorf("unknown agent %q (available: %s)", agent, strings.Join(presets.Names(), ", "))
-	}
-	if len(preset.ProjectRules) == 0 {
-		return nil, nil, nil, fmt.Errorf("preset %q has no project-scope mapping", agent)
-	}
-	ad, only, skipped := FilterAdapter(preset, selected)
+// Resolve narrows an already-resolved project adapter (see
+// resolveProjectAdapter) to the selected items. It is the non-pushing core
+// Run calls into: it returns the `only` globs and the items no rule mapped
+// (skipped) so the caller controls conflict resolution AND the order in
+// which it reports skips relative to the push. Does not touch disk.
+func resolve(agent string, src *config.Adapter, selected []Item, storeDir, cwd string, sources []*config.SourceSpec) (cfg *config.Config, only []string, skipped []Item, err error) {
+	ad, only, skipped := filterAdapter(src, selected)
 	if ad == nil {
 		return nil, nil, skipped, fmt.Errorf("nothing selected maps to %s at project scope", agent)
 	}
-	return projectConfig(agent, ad, storeDir, cwd), only, skipped, nil
+	return projectConfig(agent, ad, storeDir, cwd, sources), only, skipped, nil
 }
 
 // projectConfig builds an in-memory config whose relative targets resolve to
 // the project dir instead of $HOME. NewDefault also normalizes the rules.
-func projectConfig(agent string, ad *config.Adapter, storeDir, cwd string) *config.Config {
-	return config.NewDefault(config.ScopeUser, storeDir, cwd, map[string]*config.Adapter{agent: ad})
+//
+// sources comes from the user's own friday.yaml and has to be carried here:
+// the engine composes its roots from cfg.Sources alone, so dropping it left
+// project scope with the primary store as its only root — which silently
+// disabled the refusal to capture into a read-only .sources/<name> checkout,
+// and hid source-only content from setup entirely.
+func projectConfig(agent string, ad *config.Adapter, storeDir, cwd string, sources []*config.SourceSpec) *config.Config {
+	cfg := config.NewDefault(config.ScopeProject, storeDir, cwd, map[string]*config.Adapter{agent: ad})
+	cfg.Sources = sources
+	return cfg
+}
+
+// manifestSources reads the sources a loaded manifest declares. A store with
+// no friday.yaml (loadUserManifest returns nil) declares none.
+func manifestSources(manifest *config.Config) []*config.SourceSpec {
+	if manifest == nil {
+		return nil
+	}
+	return manifest.Sources
+}
+
+// composedRoots resolves the roots a project-scope run must expand against —
+// the same ordered set push and pull use.
+func composedRoots(storeDir string, sources []*config.SourceSpec) ([]rules.Root, error) {
+	set, err := source.Load(&config.Config{StoreDir: storeDir, Sources: sources})
+	if err != nil {
+		return nil, err
+	}
+	return set.Roots(), nil
 }
 
 // PromoteOptions controls a promote run — setup's inverse.
@@ -273,22 +451,23 @@ func Promote(prompt io.Reader, cwd string, opts PromoteOptions, onConflict engin
 	if _, err := os.Stat(storeDir); err != nil {
 		return nil, fmt.Errorf("no user store at %s — run `friday init` first", storeDir)
 	}
+	manifest, err := loadUserManifest()
+	if err != nil {
+		return nil, err
+	}
 
 	agent := opts.Agent
 	if agent == "" {
-		if agent, err = selectAgent(bufio.NewReader(prompt), presets.Names(), opts.Interactive && ui.Interactive()); err != nil {
+		if agent, err = selectAgent(bufio.NewReader(prompt), projectAgentNames(manifest), opts.Interactive && ui.Interactive()); err != nil {
 			return nil, err
 		}
 	}
-	preset, ok := presets.Get(agent)
-	if !ok {
-		return nil, fmt.Errorf("unknown agent %q (available: %s)", agent, strings.Join(presets.Names(), ", "))
-	}
-	if len(preset.ProjectRules) == 0 {
-		return nil, fmt.Errorf("preset %q has no project-scope mapping", agent)
+	ad, err := resolveProjectAdapter(manifest, agent, cwd)
+	if err != nil {
+		return nil, err
 	}
 
-	cfg := projectConfig(agent, preset.ProjectAdapter(), storeDir, cwd)
+	cfg := projectConfig(agent, ad, storeDir, cwd, manifestSources(manifest))
 	return engine.Import(cfg, engine.Options{
 		DryRun:     opts.DryRun,
 		Force:      opts.Force,
@@ -314,10 +493,10 @@ func promoteGlobs(filters []string) []string {
 }
 
 // Suggestion is the display label and suggested-checked state for one catalog
-// item. Both selection UIs — the text/huh path and the control room — build
-// their rows from this, so the presented labels and pre-checked baseline can't
-// diverge between them.
-type Suggestion struct {
+// item. Both selection paths — the plain-text prompt and the huh-based TUI
+// prompt — build their rows from this, so the presented labels and
+// pre-checked baseline can't diverge between them.
+type suggestion struct {
 	Label   string
 	Checked bool
 }
@@ -326,9 +505,9 @@ type Suggestion struct {
 // item's applied/differs state. On a fresh project (no states) it pre-checks the
 // universal baseline — core + rules — leaving skills/agents opt-in; on a re-run
 // it pre-checks whatever is already applied.
-func Suggestions(items []Item, states map[int]string) []Suggestion {
+func suggestions(items []Item, states map[int]string) []suggestion {
 	fresh := len(states) == 0
-	out := make([]Suggestion, len(items))
+	out := make([]suggestion, len(items))
 	for i, it := range items {
 		label := it.Category + " / " + it.Name
 		switch states[i] {
@@ -338,18 +517,16 @@ func Suggestions(items []Item, states map[int]string) []Suggestion {
 			label += "  (differs)"
 		}
 		baseline := it.Category == "core" || it.Category == "rules"
-		out[i] = Suggestion{Label: label, Checked: states[i] != "" || (fresh && baseline)}
+		out[i] = suggestion{Label: label, Checked: states[i] != "" || (fresh && baseline)}
 	}
 	return out
 }
 
 // ItemStates dry-runs the full project adapter and labels each item by what
-// already sits at its destinations, so a re-run shows what's applied. Exported
-// for the control room, which builds its own checklist and needs the same
-// applied/differs labels and pre-check baseline the text/huh paths use.
-func ItemStates(p presets.Preset, agent string, items []Item, storeDir, cwd string) map[int]string {
+// already sits at its destinations, so a re-run shows what's applied.
+func itemStates(ad *config.Adapter, agent string, items []Item, storeDir, cwd string, sources []*config.SourceSpec) map[int]string {
 	states := make(map[int]string, len(items))
-	changes, err := engine.Push(projectConfig(agent, p.ProjectAdapter(), storeDir, cwd), engine.Options{DryRun: true})
+	changes, err := engine.Push(projectConfig(agent, ad, storeDir, cwd, sources), engine.Options{DryRun: true})
 	if err != nil {
 		return states // labels are advisory; selection still works without them
 	}
@@ -374,7 +551,7 @@ func ItemStates(p presets.Preset, agent string, items []Item, storeDir, cwd stri
 func itemCoversAnySource(it Item, sources []string) bool {
 	for _, s := range sources {
 		for _, pat := range it.Patterns {
-			if rules.Match(pat, s) {
+			if rules.Matches(pat, s) {
 				return true
 			}
 		}
@@ -402,7 +579,7 @@ func selectItems(reader *bufio.Reader, items []Item, states map[int]string, tui 
 	if !tui {
 		return chooseItems(reader, items, states)
 	}
-	sugg := Suggestions(items, states)
+	sugg := suggestions(items, states)
 	choices := make([]ui.Choice, len(items))
 	for i := range items {
 		choices[i] = ui.Choice{Value: strconv.Itoa(i), Label: sugg[i].Label, On: sugg[i].Checked}

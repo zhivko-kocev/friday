@@ -80,8 +80,32 @@ func (s *Store) key(adapter, absPath string) string { return adapter + ":" + abs
 // in the same flat map, and vacuum/keying work unchanged.
 const canonicalAdapter = "~canonical"
 
+// Set records what friday just wrote, retiring the baseline an older release
+// recorded for the same file under the adapter's previous name so resolve's
+// fallback cannot resurrect it.
 func (s *Store) Set(adapter, absPath string, content []byte) {
+	for _, legacy := range legacyAdapterNames[adapter] {
+		delete(s.hashes, s.key(legacy, absPath))
+	}
 	s.hashes[s.key(adapter, absPath)] = hash(content)
+}
+
+// resolve returns the baseline recorded for a target, falling back to the
+// name an older release keyed it under. Without the fallback, renaming an
+// adapter in friday.yaml (antigravity -> gemini, both targeting ~/.gemini)
+// makes every file friday itself last wrote look like a file it never wrote:
+// Check reports drift, push plans ActionConflict and exits 2 on a purely
+// cosmetic rename.
+func (s *Store) resolve(adapter, absPath string) (string, bool) {
+	if h, ok := s.hashes[s.key(adapter, absPath)]; ok {
+		return h, true
+	}
+	for _, legacy := range legacyAdapterNames[adapter] {
+		if h, ok := s.hashes[s.key(legacy, absPath)]; ok {
+			return h, true
+		}
+	}
+	return "", false
 }
 
 // SetCanonical records the content of a store file at a sync point (push
@@ -107,7 +131,7 @@ func (s *Store) Check(adapter, absPath string) (drifted, exists bool) {
 	if err != nil {
 		return false, false
 	}
-	stored, known := s.hashes[s.key(adapter, absPath)]
+	stored, known := s.resolve(adapter, absPath)
 	if !known {
 		// File exists but friday didn't write it — treat as drift so the
 		// user gets a chance to inspect before overwriting.
@@ -120,7 +144,8 @@ func (s *Store) Check(adapter, absPath string) (drifted, exists bool) {
 // is known. The snapshot blob store is keyed by the same hash, which is what
 // lets a conflict prompt recover the last-synced content for a 3-way merge.
 func (s *Store) BaselineHash(adapter, absPath string) string {
-	return s.hashes[s.key(adapter, absPath)]
+	h, _ := s.resolve(adapter, absPath)
+	return h
 }
 
 // CanonicalBaselineHash returns the recorded hash for a store file, or "".

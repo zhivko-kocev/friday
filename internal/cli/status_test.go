@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -114,14 +115,23 @@ func TestStatusCheckJSONGate(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The captured stdout is the machine contract: a human line interleaved
+	// into the document, or the document dropped entirely, would otherwise
+	// still pass on the exit code alone.
 	var code int
-	_ = captureStdout(t, func() { code = cmdStatus([]string{"--json"}) })
+	out := captureStdout(t, func() { code = Run([]string{"status", "--json"}, "test") })
 	if code != 0 {
 		t.Errorf("plain --json with a pending create exited %d, want 0 (no conflict)", code)
 	}
-	_ = captureStdout(t, func() { code = cmdStatus([]string{"--json", "--check"}) })
+	if !json.Valid([]byte(out)) {
+		t.Errorf("status --json did not emit a valid JSON document:\n%s", out)
+	}
+	out = captureStdout(t, func() { code = Run([]string{"status", "--json", "--check"}, "test") })
 	if code != 2 {
 		t.Errorf("--json --check with a pending create exited %d, want 2", code)
+	}
+	if !json.Valid([]byte(out)) {
+		t.Errorf("status --json --check did not emit a valid JSON document:\n%s", out)
 	}
 }
 
@@ -313,6 +323,48 @@ func TestPrintStatusOrigin(t *testing.T) {
 	got = captureStdout(t, func() { printStatusOrigin(cfg) })
 	if !strings.Contains(got, "friday.yaml") || !strings.Contains(got, "defined in") {
 		t.Errorf("manifest origin view = %q", got)
+	}
+}
+
+// TestPrintStatusOriginMultiSource is Phase 2's regression: a configured
+// source adds a "sources:" summary line and a per-rule [source list], while
+// TestPrintStatusOrigin above proves the plain single-source case shows
+// neither — D10's "unified by default" preserved byte for byte.
+func TestPrintStatusOriginMultiSource(t *testing.T) {
+	output.SetColor(false)
+	t.Cleanup(func() { output.SetColor(false) })
+
+	dir := t.TempDir()
+	storeDir := filepath.Join(dir, "store")
+	teamDir := filepath.Join(dir, "store", ".sources", "team")
+	for _, full := range []string{
+		filepath.Join(storeDir, "rules", "general.md"),
+		filepath.Join(teamDir, "rules", "team.md"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{
+		StoreDir:     storeDir,
+		ManifestPath: filepath.Join(storeDir, "friday.yaml"),
+		Sources:      []*config.SourceSpec{{Name: "team", URL: "https://example.com/team.git"}},
+		Adapters: map[string]*config.Adapter{
+			"claude": {Target: "~/.claude", Rules: []*rules.Rule{
+				{From: rules.FromSpec{"rules/*.md"}, To: "CLAUDE.md", Strategy: rules.StrategyConcatenate},
+			}},
+		},
+	}
+
+	got := captureStdout(t, func() { printStatusOrigin(cfg) })
+	if !strings.Contains(got, "sources: team, local") {
+		t.Errorf("missing sources summary line: %q", got)
+	}
+	if !strings.Contains(got, "[team, local]") {
+		t.Errorf("missing per-rule source list (both sources hold rules/*.md matches): %q", got)
 	}
 }
 

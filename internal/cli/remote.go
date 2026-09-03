@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"errors"
-	"flag"
 	"fmt"
+
+	ucli "github.com/urfave/cli/v3"
 
 	"github.com/zhivko-kocev/friday/internal/config"
 	"github.com/zhivko-kocev/friday/internal/git"
@@ -11,96 +13,172 @@ import (
 	"github.com/zhivko-kocev/friday/internal/ui"
 )
 
-// cmdRemote — git operations on the user store.
-func cmdRemote(args []string) int {
-	if len(args) == 0 {
-		output.Err("usage: friday remote <pull|push|status>")
-		return 1
+// newRemoteCommand — git operations on the user store. init/pull/push/
+// propose/status are real urfave subcommands now (previously one function
+// switching on args[0]), so each gets its own accurate --help and shell
+// completion for free.
+func newRemoteCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:     "remote",
+		Category: "advanced",
+		Usage:    "git ops on ~/.friday (init/pull/push/propose/status)",
+		Commands: []*ucli.Command{
+			newRemoteInitCommand(),
+			newRemoteSubcommand("pull", "pull the latest changes into ~/.friday", nil, remotePull),
+			newRemoteSubcommand("push", "commit and push ~/.friday", remoteMessageFlags(), remotePush),
+			newRemoteSubcommand("propose", "push a branch + open an MR for team review", remoteProposeFlags(), remotePropose),
+			newRemoteSubcommand("status", "show git status of ~/.friday", nil, remoteStatus),
+		},
+		// urfave routes an unmatched leading token to the parent's Action,
+		// so this covers both a bare `friday remote` and a mistyped
+		// subcommand — the latter naming what it didn't understand, as
+		// rootAction does one level up.
+		Action: func(_ context.Context, cmd *ucli.Command) error {
+			return unknownSubcommand(cmd, "remote", "init|pull|push|propose|status")
+		},
 	}
+}
+
+// unknownSubcommand is the shared parent-Action for a command that only
+// dispatches: it names the token urfave could not match (if any) and lists
+// every subcommand actually registered, then exits 1.
+func unknownSubcommand(cmd *ucli.Command, parent, subcommands string) error {
+	if rest := cmd.Args().Slice(); len(rest) > 0 {
+		output.Err("unknown %s subcommand %q", parent, rest[0])
+	}
+	output.Err("usage: friday %s <%s>", parent, subcommands)
+	return ucli.Exit("", 1)
+}
+
+// requireStoreRepo resolves the store dir and confirms git is available and
+// the store is already a repo — the guard every remote subcommand except
+// `init` shares.
+func requireStoreRepo() (string, error) {
 	storeDir, err := config.UserStoreDir()
 	if err != nil {
 		output.Err("%v", err)
-		return 1
+		return "", ucli.Exit("", 1)
 	}
 	if !git.Available() {
 		output.Err("git not found in PATH")
-		return 1
+		return "", ucli.Exit("", 1)
 	}
-
-	// `remote init` must run before the is-repo guard: its whole point is
-	// wiring up a store that was scaffolded without a remote.
-	if args[0] == "init" {
-		if len(args) != 2 {
-			output.Err("usage: friday remote init <url>")
-			return 1
-		}
-		return remoteInit(storeDir, args[1])
-	}
-
 	if !git.IsRepo(storeDir) {
 		output.Err("user store at %s is not a git repo", storeDir)
 		output.Dim("hint: run `friday init` and provide a remote URL to set up a git-backed store")
-		return 1
+		return "", ucli.Exit("", 1)
 	}
+	return storeDir, nil
+}
 
-	switch args[0] {
-	case "pull":
-		if err := ui.WithSpinner("pulling latest changes", func() error { return git.Pull(storeDir) }); err != nil {
-			output.Err("%v", err)
-			return 1
-		}
-		output.OK("pulled latest changes into %s", storeDir)
-		return 0
-
-	case "push":
-		fs := flag.NewFlagSet("remote push", flag.ContinueOnError)
-		// Two flags pointing at the same string: -m is short, --message is conventional.
-		// First-set-wins: if both are provided, -m takes priority.
-		short := fs.String("m", "", "commit message (required)")
-		long := fs.String("message", "", "alias for -m")
-		if err := fs.Parse(args[1:]); err != nil {
-			return 1
-		}
-		msg := *short
-		if msg == "" {
-			msg = *long
-		}
-		if msg == "" {
-			output.Err("commit message required: friday remote push -m \"...\"")
-			return 1
-		}
-		if err := ui.WithSpinner("committing and pushing", func() error { return git.StageCommitPush(storeDir, msg) }); err != nil {
-			if errors.Is(err, git.ErrNothingToCommit) {
-				output.Skip("nothing to commit in %s", storeDir)
-				return 0
+// newRemoteSubcommand wires one of the storeDir-taking handlers into a real
+// Command, sharing the requireStoreRepo guard every one of them needs first.
+func newRemoteSubcommand(name, usage string, flags []ucli.Flag, run func(*ucli.Command, string) error) *ucli.Command {
+	return &ucli.Command{
+		Name:  name,
+		Usage: usage,
+		Flags: flags,
+		Action: func(_ context.Context, cmd *ucli.Command) error {
+			storeDir, err := requireStoreRepo()
+			if err != nil {
+				return err
 			}
-			output.Err("%v", err)
-			return 1
-		}
-		output.OK("pushed %s", storeDir)
-		return 0
-
-	case "propose":
-		return remotePropose(storeDir, args[1:])
-
-	case "status":
-		out, err := git.Status(storeDir)
-		if err != nil {
-			output.Err("%v", err)
-			return 1
-		}
-		output.Header("Remote status (" + storeDir + ")")
-		if out == "" {
-			output.Dim("(working tree clean)")
-		} else {
-			fmt.Println(out)
-		}
-		return 0
-
-	default:
-		output.Err("unknown remote subcommand %q (want: init, pull, push, propose, status)", args[0])
-		return 1
+			return run(cmd, storeDir)
+		},
 	}
+}
+
+func newRemoteInitCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:      "init",
+		Usage:     "set (or replace) origin on ~/.friday",
+		ArgsUsage: "<url>",
+		Action: func(_ context.Context, cmd *ucli.Command) error {
+			if cmd.Args().Len() != 1 {
+				output.Err("usage: friday remote init <url>")
+				return ucli.Exit("", 1)
+			}
+			storeDir, err := config.UserStoreDir()
+			if err != nil {
+				output.Err("%v", err)
+				return ucli.Exit("", 1)
+			}
+			if !git.Available() {
+				output.Err("git not found in PATH")
+				return ucli.Exit("", 1)
+			}
+			// `remote init` must run before the is-repo guard: its whole point
+			// is wiring up a store that was scaffolded without a remote.
+			return remoteInit(storeDir, cmd.Args().First())
+		},
+	}
+}
+
+func remotePull(_ *ucli.Command, storeDir string) error {
+	if err := ui.WithSpinner("pulling latest changes", func() error { return git.Pull(storeDir) }); err != nil {
+		output.Err("%v", err)
+		return ucli.Exit("", 1)
+	}
+	output.OK("pulled latest changes into %s", storeDir)
+	return nil
+}
+
+// remoteMessageFlags is the -m/--message pair shared by `remote push` and
+// `remote propose`/`share`: -m is short, --message is conventional, and
+// -m wins when both are set.
+func remoteMessageFlags() []ucli.Flag {
+	return []ucli.Flag{
+		&ucli.StringFlag{Name: "m", Usage: "commit message (required)"},
+		&ucli.StringFlag{Name: "message", Usage: "alias for -m"},
+	}
+}
+
+func messageFlag(cmd *ucli.Command) string {
+	if m := cmd.String("m"); m != "" {
+		return m
+	}
+	return cmd.String("message")
+}
+
+func remotePush(cmd *ucli.Command, storeDir string) error {
+	msg := messageFlag(cmd)
+	if msg == "" {
+		output.Err("commit message required: friday remote push -m \"...\"")
+		return ucli.Exit("", 1)
+	}
+	if err := ui.WithSpinner("committing and pushing", func() error { return git.StageCommitPush(storeDir, msg) }); err != nil {
+		if errors.Is(err, git.ErrNothingToCommit) {
+			output.Skip("nothing to commit in %s", storeDir)
+			return nil
+		}
+		output.Err("%v", err)
+		return ucli.Exit("", 1)
+	}
+	output.OK("pushed %s", storeDir)
+	return nil
+}
+
+func remoteStatus(_ *ucli.Command, storeDir string) error {
+	out, err := git.Status(storeDir)
+	if err != nil {
+		output.Err("%v", err)
+		return ucli.Exit("", 1)
+	}
+	output.Header("Remote status (" + storeDir + ")")
+	if out == "" {
+		output.Dim("(working tree clean)")
+	} else {
+		fmt.Println(out)
+	}
+	return nil
+}
+
+// remoteProposeFlags is remote propose's own flag set, reused by `share`.
+func remoteProposeFlags() []ucli.Flag {
+	return append(remoteMessageFlags(),
+		&ucli.StringFlag{Name: "branch", Usage: "remote branch name (default: friday/propose-<timestamp>)"},
+		&ucli.StringFlag{Name: "target", Usage: "MR target branch (default: the remote's HEAD branch)"},
+	)
 }
 
 // remotePropose is `remote push` for team stores with protected branches:
@@ -110,61 +188,35 @@ func cmdRemote(args []string) int {
 // MR server-side; other forges print their PR link in the push output. Once
 // the MR merges, `friday remote pull` fast-forwards and the local edits
 // coincide with the merged content.
-// proposeOpts backs both `remote propose` and the `share` porcelain, and is
-// the flagset the command table introspects for completion + `--help`.
-type proposeOpts struct {
-	message, messageLong, branch, target string
-}
-
-func proposeFlags(o *proposeOpts) *flag.FlagSet {
-	fs := flag.NewFlagSet("propose", flag.ContinueOnError)
-	// -m is short, --message is conventional; -m wins when both are set.
-	fs.StringVar(&o.message, "m", "", "commit message (required)")
-	fs.StringVar(&o.messageLong, "message", "", "alias for -m")
-	fs.StringVar(&o.branch, "branch", "", "remote branch name (default: friday/propose-<timestamp>)")
-	fs.StringVar(&o.target, "target", "", "MR target branch (default: the remote's HEAD branch)")
-	return fs
-}
-
-func (o *proposeOpts) msg() string {
-	if o.message != "" {
-		return o.message
-	}
-	return o.messageLong
-}
-
-func remotePropose(storeDir string, args []string) int {
-	var o proposeOpts
-	fs := proposeFlags(&o)
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if o.msg() == "" {
+func remotePropose(cmd *ucli.Command, storeDir string) error {
+	msg := messageFlag(cmd)
+	if msg == "" {
 		output.Err("commit message required: pass -m \"...\"")
-		return 1
+		return ucli.Exit("", 1)
 	}
-	return proposeStore(storeDir, o.branch, o.target, o.msg())
+	if code := proposeStore(storeDir, cmd.String("branch"), cmd.String("target"), msg); code != 0 {
+		return ucli.Exit("", code)
+	}
+	return nil
 }
 
-// cmdShare is the top-level porcelain for `remote propose`: propose your store
-// changes for team review without remembering the subcommand. Same guards,
-// same flags, same MR flow.
-func cmdShare(args []string) int {
-	storeDir, err := config.UserStoreDir()
-	if err != nil {
-		output.Err("%v", err)
-		return 1
+// newShareCommand is the top-level porcelain for `remote propose`: propose
+// your store changes for team review without remembering the subcommand.
+// Same guards, same flags, same MR flow.
+func newShareCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:     "share",
+		Category: "porcelain",
+		Usage:    "propose your store changes for team review (opens an MR)",
+		Flags:    remoteProposeFlags(),
+		Action: func(_ context.Context, cmd *ucli.Command) error {
+			storeDir, err := requireStoreRepo()
+			if err != nil {
+				return err
+			}
+			return remotePropose(cmd, storeDir)
+		},
 	}
-	if !git.Available() {
-		output.Err("git not found in PATH")
-		return 1
-	}
-	if !git.IsRepo(storeDir) {
-		output.Err("user store at %s is not a git repo", storeDir)
-		output.Dim("hint: run `friday init` and provide a remote URL to set up a git-backed store")
-		return 1
-	}
-	return remotePropose(storeDir, args)
 }
 
 // proposeStore runs the ephemeral-commit → remote-branch → MR flow. Shared
@@ -207,11 +259,11 @@ func proposeStore(storeDir, branch, target, msg string) int {
 // remoteInit sets (or replaces) origin on the store, running `git init`
 // first when the store isn't a repo yet. Closes the "scaffolded blank, now
 // I want to publish" gap without re-cloning.
-func remoteInit(storeDir, url string) int {
+func remoteInit(storeDir, url string) error {
 	if !git.IsRepo(storeDir) {
 		if err := git.Init(storeDir); err != nil {
 			output.Err("%v", err)
-			return 1
+			return ucli.Exit("", 1)
 		}
 		output.OK("initialized git repo in %s", storeDir)
 	}
@@ -220,8 +272,8 @@ func remoteInit(storeDir, url string) int {
 	}
 	if err := git.SetOrigin(storeDir, url); err != nil {
 		output.Err("%v", err)
-		return 1
+		return ucli.Exit("", 1)
 	}
 	output.OK("origin set to %s", url)
-	return 0
+	return nil
 }

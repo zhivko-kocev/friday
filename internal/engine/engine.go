@@ -8,12 +8,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/zhivko-kocev/friday/internal/atomicio"
 	"github.com/zhivko-kocev/friday/internal/config"
 	"github.com/zhivko-kocev/friday/internal/drift"
 	"github.com/zhivko-kocev/friday/internal/output"
 	"github.com/zhivko-kocev/friday/internal/rules"
+	"github.com/zhivko-kocev/friday/internal/source"
 )
 
 const (
@@ -40,7 +42,7 @@ func Pull(cfg *config.Config, opts Options) ([]Change, error) {
 // planImport all satisfy it; runWith supplies the shared resolve/apply loop.
 // owned is friday's hook ownership cache (only planPush consults it, for
 // merge-json stale-entry removal; the others ignore it).
-type planner func(owned *drift.Owned, adapterName string, ad *config.Adapter, storeAbs, targetAbs string) ([]Change, error)
+type planner func(owned *drift.Owned, adapterName string, ad *config.Adapter, roots []rules.Root, targetAbs string) ([]Change, error)
 
 func run(cfg *config.Config, opts Options, dir Direction) ([]Change, error) {
 	if dir == DirPull {
@@ -55,7 +57,23 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 		return nil, err
 	}
 
-	storeAbs := cfg.StoreDir
+	set, err := source.Load(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("load sources: %w", err)
+	}
+	roots := set.Roots()
+	// A source with no directory on disk contributes no matches, which is
+	// indistinguishable from an empty source — so a write would silently lay a
+	// partial store over the targets and report success. `.sources/` is
+	// gitignored by design, so this is the default state on a second machine,
+	// not an exotic one. A dry run still plans: `friday status` reports the
+	// uncloned sources itself, and a preview that refuses to preview is no
+	// help in diagnosing exactly this.
+	if !opts.DryRun {
+		if missing := set.Uncloned(); len(missing) > 0 {
+			return nil, fmt.Errorf("source %s not cloned — run `friday source update` first (a missing source renders as an empty one, which would push a partial store)", strings.Join(missing, ", "))
+		}
+	}
 	driftPath := opts.driftPath
 	if driftPath == "" {
 		driftPath, err = drift.DefaultPath()
@@ -82,7 +100,7 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 			return nil, err
 		}
 
-		changes, err := plan(owned, name, ad, storeAbs, targetAbs)
+		changes, err := plan(owned, name, ad, roots, targetAbs)
 		if err != nil {
 			return nil, fmt.Errorf("adapter %s: %w", name, err)
 		}
@@ -102,7 +120,7 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 			if ch.mergedPush {
 				prepareMergeWriteBack(ch, ad.Rules[ch.RuleIndex])
 			}
-			confirmDriftExemptWrite(ch, opts)
+			confirmHookWrite(ch, opts)
 			if !opts.DryRun {
 				didWrite, err := apply(ch, store, dir)
 				if err != nil {
@@ -113,7 +131,7 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 				// push can remove its own stale entries. Uses the same mergeSource
 				// the plan merged from, so plan and apply agree.
 				if didWrite && ch.driftExempt && (ch.Action == ActionCreate || ch.Action == ActionUpdate) {
-					owned.Set(ch.Adapter, ch.DestPath, ch.mergeSource)
+					owned.Set(ch.Adapter, ch.Sources[0], ch.DestPath, ch.mergeSource)
 					ownedChanged = true
 				}
 				// Remember store files this pull actually captured, so a later
@@ -138,7 +156,7 @@ func runWith(cfg *config.Config, opts Options, dir Direction, plan planner) ([]C
 	if !opts.DryRun && wrote {
 		warnf := opts.Warnf
 		if warnf == nil {
-			warnf = output.Warn // CLI default; the control room sets a sink
+			warnf = output.Warn // CLI default; see Options.Warnf
 		}
 		if err := store.Save(); err != nil {
 			warnf("failed to save drift store: %v", err)
@@ -188,7 +206,7 @@ func canceled(abort <-chan struct{}) bool {
 
 func matchesAny(path string, globs []string) bool {
 	for _, g := range globs {
-		if rules.Match(g, path) {
+		if rules.Matches(g, path) {
 			return true
 		}
 	}
@@ -336,14 +354,22 @@ func prepareMergeWriteBack(ch *Change, r *rules.Rule) {
 	ch.Warning = "merge written to the target only — fold it into the store or the next push will flag this file again"
 }
 
-// confirmDriftExemptWrite gates a hook write behind the caller's confirmation:
-// a co-owned merge write (merge-json) or a copy that drops an auto-activating
-// executable hook plugin (confirmWrite). Hook code runs unattended and a store
-// may be a clone of someone else's repo, so the default is NOT to write: a nil
-// confirmer or a declined prompt downgrades the change to a skip. --force
-// bypasses the gate; dry runs plan the real action and never prompt.
-func confirmDriftExemptWrite(ch *Change, opts Options) {
-	if opts.DryRun || opts.Force || (!ch.driftExempt && !ch.confirmWrite) {
+// confirmHookWrite gates a write that installs executable hook wiring behind
+// the caller's confirmation: a merge whose store source lives under hooks/, or
+// a copy rule with confirm_hook (an OpenCode plugin, an oh-my-pi extension).
+//
+// The gate keys on hook CONTENT, never on driftExempt. Keying it on
+// driftExempt both over- and under-fired: it prompted for every MCP /
+// permissions / defaults merge (so --no-interactive silently dropped the
+// user's whole policy) while letting a plain copy rule drop an
+// auto-activating plugin with no prompt at all.
+//
+// Hook code runs unattended and a store may be a clone of someone else's
+// repo, so the default is NOT to write: a nil confirmer or a declined prompt
+// downgrades the change to a skip. --force bypasses the gate; dry runs plan
+// the real action and never prompt.
+func confirmHookWrite(ch *Change, opts Options) {
+	if opts.DryRun || opts.Force || !ch.hookWrite {
 		return
 	}
 	if ch.Action != ActionCreate && ch.Action != ActionUpdate {

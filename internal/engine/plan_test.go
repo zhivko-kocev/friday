@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +31,13 @@ func scaffold(t *testing.T, files map[string]string) (storeAbs, targetAbs string
 	return
 }
 
+// singleRoot wraps a bare store dir as the one-element []rules.Root every
+// planPush/planPull/planImport test call passes — the single-source shape
+// Phase 2's multi-root signature must keep behaving exactly like before.
+func singleRoot(dir string) []rules.Root {
+	return []rules.Root{{Name: "local", Dir: dir}}
+}
+
 func TestPlanPushCopy(t *testing.T) {
 	storeAbs, targetAbs := scaffold(t, map[string]string{
 		"identity.md":      "id",
@@ -46,7 +52,7 @@ func TestPlanPushCopy(t *testing.T) {
 			{From: rules.FromSpec{"rules/*.md"}, To: "rules/{filename}", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
+	changes, err := planPush(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,56 +67,12 @@ func TestPlanPushCopy(t *testing.T) {
 	}
 }
 
-func TestPlanPushMDStruct(t *testing.T) {
-	storeAbs, targetAbs := scaffold(t, map[string]string{
-		"agents/architect.md": "---\nname: architect\ndescription: plans work\ntools: Read\n---\nBody line one.\nBody \"two\".\n",
-	})
-	ad := &config.Adapter{
-		Target: targetAbs,
-		Rules: []*rules.Rule{
-			{From: rules.FromSpec{"agents/*.md"}, To: "agents/{stem}.toml", Strategy: rules.StrategyMDToTOML},
-			{From: rules.FromSpec{"agents/*.md"}, To: "sub/{stem}/agent.json", Strategy: rules.StrategyMDToJSON},
-		},
-	}
-	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(changes) != 2 {
-		t.Fatalf("got %d changes, want 2 — %+v", len(changes), changes)
-	}
-	byDest := map[string]Change{}
-	for _, ch := range changes {
-		byDest[ch.DestRel] = ch
-	}
-
-	toml, ok := byDest["agents/architect.toml"]
-	if !ok || toml.Action != ActionCreate {
-		t.Fatalf("md-to-toml change missing or not create: %+v", changes)
-	}
-	if !strings.Contains(string(toml.NewContent), `name = "architect"`) ||
-		!strings.Contains(string(toml.NewContent), `developer_instructions = """`) ||
-		!strings.Contains(string(toml.NewContent), `Body \"two\".`) {
-		t.Errorf("unexpected TOML render:\n%s", toml.NewContent)
-	}
-
-	js, ok := byDest["sub/architect/agent.json"]
-	if !ok || js.Action != ActionCreate {
-		t.Fatalf("md-to-json change missing or not create: %+v", changes)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(js.NewContent, &m); err != nil {
-		t.Fatalf("emitted invalid JSON: %v\n%s", err, js.NewContent)
-	}
-	if m["name"] != "architect" || m["description"] != "plans work" || m["prompt"] == nil {
-		t.Errorf("unexpected JSON fields: %v", m)
-	}
-}
-
-// TestPlanImportRefusesMDStruct locks the push-only gate: without it, importing
-// a literal-target md-to-toml rule would read the generated .toml straight back
-// over the store markdown — silent store corruption on a supported config.
-func TestPlanImportRefusesMDStruct(t *testing.T) {
+// TestPlanImportRefusesRender locks the import-side gate added alongside the
+// render strategy: without it, importing a literal-target render rule (e.g.
+// codex's agents/*.md -> agents/{stem}.toml) would read the generated .toml
+// straight back over the store markdown — silent store corruption on a
+// supported config.
+func TestPlanImportRefusesRender(t *testing.T) {
 	storeAbs, targetAbs := scaffold(t, map[string]string{
 		"agents/architect.md": "---\nname: architect\n---\noriginal store body",
 	})
@@ -123,15 +85,21 @@ func TestPlanImportRefusesMDStruct(t *testing.T) {
 	ad := &config.Adapter{
 		Target: targetAbs,
 		Rules: []*rules.Rule{
-			{From: rules.FromSpec{"agents/architect.md"}, To: "agents/architect.toml", Strategy: rules.StrategyMDToTOML},
+			{
+				From:     rules.FromSpec{"agents/architect.md"},
+				To:       "agents/architect.toml",
+				Strategy: rules.StrategyRender,
+				Surface:  rules.SurfaceCodexAgent,
+				Merge:    rules.StrategyCopy,
+			},
 		},
 	}
-	changes, err := planImport(nil, "test", ad, storeAbs, targetAbs)
+	changes, err := planImport(nil, "test", ad, singleRoot(storeAbs), targetAbs, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(changes) != 1 || changes[0].Action != ActionUnsupported {
-		t.Fatalf("md-to-toml import must be reported unsupported (push-only), got %+v", changes)
+		t.Fatalf("render import must be reported unsupported, got %+v", changes)
 	}
 	// The store markdown must be untouched by planning (it never writes, but be
 	// explicit that the corruption path is closed).
@@ -156,7 +124,7 @@ func TestPlanPushConcatenate(t *testing.T) {
 			},
 		},
 	}
-	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
+	changes, err := planPush(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +149,7 @@ func TestPlanPushInSync(t *testing.T) {
 			{From: rules.FromSpec{"a.md"}, To: "a.md", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, _ := planPush(nil, "test", ad, storeAbs, targetAbs)
+	changes, _ := planPush(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if len(changes) != 1 || changes[0].Action != ActionInSync {
 		t.Errorf("got %+v, want one in-sync change", changes)
 	}
@@ -202,7 +170,7 @@ func TestPlanPullSkipsConcatenate(t *testing.T) {
 			},
 		},
 	}
-	changes, err := planPull(nil, "test", ad, storeAbs, targetAbs)
+	changes, err := planPull(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +190,7 @@ func TestPlanPullCopy(t *testing.T) {
 			{From: rules.FromSpec{"a.md"}, To: "a.md", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planPull(nil, "test", ad, storeAbs, targetAbs)
+	changes, err := planPull(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +216,7 @@ func TestPlanPushReplace(t *testing.T) {
 			{From: rules.FromSpec{"skills/*.md"}, To: "skills/{filename}", Strategy: rules.StrategyCopy, Replace: replace},
 		},
 	}
-	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
+	changes, err := planPush(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +253,7 @@ func TestPlanPullReplaceRoundTrip(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(targetAbs, "skills", "s.md"), []byte("Follow ~/.claude/core/core.md"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changes, err := planPull(nil, "test", ad, storeAbs, targetAbs)
+	changes, err := planPull(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +266,7 @@ func TestPlanPullReplaceRoundTrip(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(targetAbs, "skills", "s.md"), []byte("edited: see ~/.claude/standards/go.md"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changes, err = planPull(nil, "test", ad, storeAbs, targetAbs)
+	changes, err = planPull(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +299,7 @@ func TestPlanPullReplaceNaturalValueUntouched(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(targetAbs, "skills", "s.md"), []byte(pushed), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changes, err := planPull(nil, "test", ad, storeAbs, targetAbs)
+	changes, err := planPull(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +340,7 @@ func TestPlanPullMissingTargetSkipped(t *testing.T) {
 			{From: rules.FromSpec{"a.md"}, To: "a.md", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planPull(nil, "test", ad, storeAbs, targetAbs)
+	changes, err := planPull(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +358,7 @@ func TestPlanConcatenateMaxBytesWarning(t *testing.T) {
 			{From: rules.FromSpec{"core.md"}, To: "out.md", Strategy: rules.StrategyConcatenate, MaxBytes: 50},
 		},
 	}
-	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
+	changes, err := planPush(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +370,7 @@ func TestPlanConcatenateMaxBytesWarning(t *testing.T) {
 	}
 	// Under the limit: no warning.
 	ad.Rules[0].MaxBytes = 200
-	changes, _ = planPush(nil, "test", ad, storeAbs, targetAbs)
+	changes, _ = planPush(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if changes[0].Warning != "" {
 		t.Errorf("Warning = %q, want none under the limit", changes[0].Warning)
 	}
@@ -422,7 +390,7 @@ func TestPlanCopyLiteralToFirstVariantWins(t *testing.T) {
 			{From: rules.FromSpec{"core.md", "core/core.md", "identity.md"}, To: "AGENTS.md", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
+	changes, err := planPush(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +416,7 @@ func TestPlanPullLiteralToCapturesPreferredVariantOnly(t *testing.T) {
 			{From: rules.FromSpec{"core.md", "core/core.md", "identity.md"}, To: "AGENTS.md", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planPull(nil, "test", ad, storeAbs, targetAbs)
+	changes, err := planPull(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +436,7 @@ func TestPlanCopyTokenizedToReportsMissingPerPattern(t *testing.T) {
 			{From: rules.FromSpec{"rules/*.md", "standrds/*.md"}, To: "x/{filename}", Strategy: rules.StrategyCopy},
 		},
 	}
-	changes, err := planPush(nil, "test", ad, storeAbs, targetAbs)
+	changes, err := planPush(nil, "test", ad, singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,5 +470,89 @@ func TestPullContentPreservesUnchangedStoreLines(t *testing.T) {
 	want := "clone into ~/.friday\nline two EDITED ${ROOT}\nsee ${ROOT}/core.md\n"
 	if got != want {
 		t.Errorf("pullContent:\n got %q\nwant %q", got, want)
+	}
+}
+
+// mcp and co-owned permissions DO have a pull inverse, and planPull already
+// uses it. Reporting every render rule unsupported meant `friday claim` could
+// never capture a user's existing native MCP servers or permission policy off
+// an already-configured agent, while `friday pull` recovered the identical
+// content from the identical rule shape.
+func TestPlanImportCapturesInvertibleRenderSurfaces(t *testing.T) {
+	storeAbs, targetAbs := scaffold(t, map[string]string{
+		"mcp.yaml": "version: 1\nservers: {}\n",
+	})
+	if err := os.WriteFile(filepath.Join(targetAbs, "mcp.json"), []byte(
+		`{"mcpServers":{"fs":{"command":"npx","args":["-y","srv"]}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ad := &config.Adapter{
+		Target: targetAbs,
+		Rules: []*rules.Rule{{
+			From:     rules.FromSpec{"mcp.yaml"},
+			To:       "mcp.json",
+			Strategy: rules.StrategyRender,
+			Surface:  rules.SurfaceMCP,
+			Merge:    rules.StrategyMergeJSON,
+		}},
+	}
+	changes, err := planImport(nil, "claude", ad, singleRoot(storeAbs), targetAbs, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) == 0 {
+		t.Fatal("mcp render rule produced no import change at all")
+	}
+	for _, ch := range changes {
+		if ch.Action == ActionUnsupported {
+			t.Fatalf("mcp render rule reported unsupported (%s) even though pull inverts it", ch.Reason)
+		}
+	}
+	// The capture lands in the canonical schema, not as a raw copy of the
+	// native file.
+	if !strings.HasSuffix(filepath.ToSlash(changes[0].DestPath), "mcp.yaml") {
+		t.Errorf("capture destination = %q, want the canonical mcp.yaml", changes[0].DestPath)
+	}
+	if !strings.Contains(string(changes[0].NewContent), "fs") {
+		t.Errorf("captured mcp.yaml lost the server:\n%s", changes[0].NewContent)
+	}
+}
+
+// The genuinely one-way surfaces stay refused, each with a reason that names
+// its own obstacle rather than one blanket claim for all five.
+func TestPlanImportRefusesOneWayRenderSurfaces(t *testing.T) {
+	cases := map[string]struct {
+		surface string
+		merge   string
+		want    string
+	}{
+		"defaults":         {rules.SurfaceDefaults, rules.StrategyMergeJSON, "defaults"},
+		"gemini-command":   {rules.SurfaceGeminiCommand, rules.StrategyCopy, "frontmatter"},
+		"permissions copy": {rules.SurfacePermissions, rules.StrategyCopy, "friday-owned outright"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			storeAbs, targetAbs := scaffold(t, map[string]string{"defaults.yaml": "version: 1\n"})
+			if err := os.WriteFile(filepath.Join(targetAbs, "settings.json"), []byte(`{}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ad := &config.Adapter{Target: targetAbs, Rules: []*rules.Rule{{
+				From:     rules.FromSpec{"defaults.yaml"},
+				To:       "settings.json",
+				Strategy: rules.StrategyRender,
+				Surface:  c.surface,
+				Merge:    c.merge,
+			}}}
+			changes, err := planImport(nil, "claude", ad, singleRoot(storeAbs), targetAbs, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(changes) != 1 || changes[0].Action != ActionUnsupported {
+				t.Fatalf("want one unsupported change, got %+v", changes)
+			}
+			if !strings.Contains(changes[0].Reason, c.want) {
+				t.Errorf("reason %q does not explain this surface's own obstacle (%q)", changes[0].Reason, c.want)
+			}
+		})
 	}
 }

@@ -102,3 +102,144 @@ func TestColoredModeStylesText(t *testing.T) {
 		t.Errorf("colored OK stripped = %q, want %q", stripped, "  ✓ hi\n")
 	}
 }
+
+// TestColorEnabledPrecedence guards D29's FORCE_COLOR addition: NO_COLOR /
+// FRIDAY_NO_COLOR always win (forcing color off even over FORCE_COLOR),
+// FORCE_COLOR forces color on independent of whether stdout is a TTY, and
+// with neither set the result falls back to auto-detection.
+func TestColorEnabledPrecedence(t *testing.T) {
+	cases := []struct {
+		name                          string
+		noColor, fridayNoColor, force string
+		want                          bool
+	}{
+		{name: "force color on", force: "1", want: true},
+		{name: "force color on with any value", force: "true", want: true},
+		{name: "NO_COLOR wins over FORCE_COLOR", noColor: "1", force: "1", want: false},
+		{name: "FRIDAY_NO_COLOR wins over FORCE_COLOR", fridayNoColor: "1", force: "1", want: false},
+		{name: "NO_COLOR alone forces off", noColor: "1", want: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("NO_COLOR", c.noColor)
+			t.Setenv("FRIDAY_NO_COLOR", c.fridayNoColor)
+			t.Setenv("FORCE_COLOR", c.force)
+			if got := colorEnabled(); got != c.want {
+				t.Errorf("colorEnabled() = %v, want %v", got, c.want)
+			}
+		})
+	}
+	// The documented third branch: with all three unset the answer is
+	// whatever stdout is, which is the one case whose value differs between
+	// `go test` and a terminal — so assert the delegation, not a constant.
+	t.Run("falls back to TTY detection", func(t *testing.T) {
+		t.Setenv("NO_COLOR", "")
+		t.Setenv("FRIDAY_NO_COLOR", "")
+		t.Setenv("FORCE_COLOR", "")
+		if got := colorEnabled(); got != isTTY() {
+			t.Errorf("colorEnabled() = %v, want isTTY() = %v", got, isTTY())
+		}
+	})
+}
+
+// TestColorEnabledIsPure guards the split of pinColorProfile out of the
+// predicate: querying the color preference must not repin the process-global
+// lipgloss renderer, which would silently change how every later caller in
+// the process renders.
+func TestColorEnabledIsPure(t *testing.T) {
+	saved := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(saved) })
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FRIDAY_NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "1")
+	if !colorEnabled() {
+		t.Fatal("colorEnabled() = false with FORCE_COLOR set")
+	}
+	if got := lipgloss.ColorProfile(); got != termenv.TrueColor {
+		t.Errorf("colorEnabled() repinned the global profile to %v", got)
+	}
+}
+
+// TestQuietSuppressesChatter pins the --quiet contract: every helper but Err
+// goes silent.
+func TestQuietSuppressesChatter(t *testing.T) {
+	SetColor(false)
+	SetQuiet(true)
+	t.Cleanup(func() {
+		SetColor(false)
+		SetQuiet(false)
+	})
+	got := captureStream(t, &os.Stdout, func() {
+		OK("ok")
+		Skip("skip")
+		Warn("warn")
+		Info("info")
+		Header("header")
+		Dim("dim")
+		Line(LevelWarn, "line")
+		DiffLine("+added")
+	})
+	if got != "" {
+		t.Errorf("quiet mode printed to stdout: %q", got)
+	}
+	if errOut := captureStream(t, &os.Stderr, func() { Err("boom") }); !strings.Contains(errOut, "boom") {
+		t.Errorf("quiet mode swallowed an error: %q", errOut)
+	}
+}
+
+// TestPromptContextSurvivesQuiet is the informed-consent guard: a prompt
+// blocks on stdin whether or not --quiet is set, so the evidence it is asking
+// about must print anyway. Suppressing the adapter, the file name, or the
+// shell commands while still asking "install this hook?" / "keep canonical or
+// use target?" turns consent into a blind guess over destructive writes.
+func TestPromptContextSurvivesQuiet(t *testing.T) {
+	SetColor(false)
+	SetQuiet(true)
+	t.Cleanup(func() {
+		SetColor(false)
+		SetQuiet(false)
+	})
+	got := captureStream(t, &os.Stdout, func() {
+		WithPromptContext(func() {
+			Warn("CONFLICT: OUT.md")
+			Dim("  dest:   /home/u/OUT.md")
+			DiffLine("-old")
+		})
+	})
+	for _, want := range []string{"CONFLICT: OUT.md", "/home/u/OUT.md", "-old"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt context lost %q under --quiet:\n%s", want, got)
+		}
+	}
+	// Chatter after the block is quiet again — the exemption is scoped, not
+	// a global un-quieting.
+	if after := captureStream(t, &os.Stdout, func() { OK("done") }); after != "" {
+		t.Errorf("prompt context leaked past its block: %q", after)
+	}
+}
+
+// TestPromptContextNests guards the scoping when a prompt's evidence renders
+// through another prompt-context helper (the pull plan inside the apply
+// prompt): the inner block must not un-quiet the outer one on the way out.
+func TestPromptContextNests(t *testing.T) {
+	SetColor(false)
+	SetQuiet(true)
+	t.Cleanup(func() {
+		SetColor(false)
+		SetQuiet(false)
+	})
+	got := captureStream(t, &os.Stdout, func() {
+		WithPromptContext(func() {
+			WithPromptContext(func() { Dim("inner") })
+			Dim("outer")
+		})
+		Dim("after")
+	})
+	if !strings.Contains(got, "inner") || !strings.Contains(got, "outer") {
+		t.Errorf("nested prompt context lost output:\n%s", got)
+	}
+	if strings.Contains(got, "after") {
+		t.Errorf("nested prompt context leaked past its block:\n%s", got)
+	}
+}

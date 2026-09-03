@@ -25,7 +25,7 @@ const storeHooks = `{"hooks":{"PreToolUse":[{"matcher":"Bash"}]}}`
 
 func TestPlanMergeJSONCreate(t *testing.T) {
 	storeAbs, targetAbs := scaffold(t, map[string]string{"hooks/hooks.json": storeHooks})
-	changes, err := planPush(nil, "claude", mergeJSONAdapter(targetAbs), storeAbs, targetAbs)
+	changes, err := planPush(nil, "claude", mergeJSONAdapter(targetAbs), singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestPlanMergeJSONInSyncDespiteReformattedNeighbor(t *testing.T) {
 	existing := "{\n    \"model\": \"opus\",\n    \"hooks\": { \"PreToolUse\": [ {\"matcher\":\"Bash\"} ] }\n}\n"
 	writeTarget(t, targetAbs, "settings.json", existing)
 
-	changes, err := planPush(nil, "claude", mergeJSONAdapter(targetAbs), storeAbs, targetAbs)
+	changes, err := planPush(nil, "claude", mergeJSONAdapter(targetAbs), singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestPlanMergeJSONUpdatePreservesNeighbor(t *testing.T) {
 	// Target has an unmanaged key (model) and the user's own hook (Read).
 	writeTarget(t, targetAbs, "settings.json", `{"model":"opus","hooks":{"PreToolUse":[{"matcher":"Read"}]}}`)
 
-	changes, err := planPush(nil, "claude", mergeJSONAdapter(targetAbs), storeAbs, targetAbs)
+	changes, err := planPush(nil, "claude", mergeJSONAdapter(targetAbs), singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,9 @@ func TestPlanMergeJSONUpdatePreservesNeighbor(t *testing.T) {
 		t.Fatalf("action = %s, want update", ch.Action)
 	}
 	s := string(ch.NewContent)
-	if !strings.Contains(s, `"model": "opus"`) {
+	// model is untouched by the merge (source never mentions it), so it
+	// keeps its exact original spelling — no space after the colon.
+	if !strings.Contains(s, `"model":"opus"`) {
 		t.Errorf("unmanaged key lost: %s", s)
 	}
 	// Entry-level merge: friday's Bash entry is added while the user's Read entry
@@ -89,7 +91,7 @@ func TestPlanMergeJSONMalformedTargetSkips(t *testing.T) {
 
 	// A malformed target is skipped (unsupported), not an error that aborts the
 	// whole run — and never overwritten.
-	changes, err := planPush(nil, "claude", mergeJSONAdapter(targetAbs), storeAbs, targetAbs)
+	changes, err := planPush(nil, "claude", mergeJSONAdapter(targetAbs), singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatalf("malformed target must not abort the run: %v", err)
 	}
@@ -104,7 +106,7 @@ func TestPlanMergeJSONMalformedTargetSkips(t *testing.T) {
 
 func TestPlanMergeJSONMissingSource(t *testing.T) {
 	storeAbs, targetAbs := scaffold(t, map[string]string{})
-	changes, err := planPush(nil, "claude", mergeJSONAdapter(targetAbs), storeAbs, targetAbs)
+	changes, err := planPush(nil, "claude", mergeJSONAdapter(targetAbs), singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +117,7 @@ func TestPlanMergeJSONMissingSource(t *testing.T) {
 
 func TestPlanMergeJSONPullUnsupported(t *testing.T) {
 	storeAbs, targetAbs := scaffold(t, map[string]string{"hooks/hooks.json": storeHooks})
-	changes, err := planPull(nil, "claude", mergeJSONAdapter(targetAbs), storeAbs, targetAbs)
+	changes, err := planPull(nil, "claude", mergeJSONAdapter(targetAbs), singleRoot(storeAbs), targetAbs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +129,7 @@ func TestPlanMergeJSONPullUnsupported(t *testing.T) {
 func TestPlanMergeJSONImportUnsupported(t *testing.T) {
 	storeAbs, targetAbs := scaffold(t, map[string]string{"hooks/hooks.json": storeHooks})
 	writeTarget(t, targetAbs, "settings.json", `{"model":"opus"}`)
-	changes, err := planImport(nil, "claude", mergeJSONAdapter(targetAbs), storeAbs, targetAbs)
+	changes, err := planImport(nil, "claude", mergeJSONAdapter(targetAbs), singleRoot(storeAbs), targetAbs, "")
 	if err != nil {
 		t.Fatal(err)
 	}
