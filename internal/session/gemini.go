@@ -432,13 +432,69 @@ func geminiSlugProjects(root string) map[string]string {
 // (a case-sensitive Contains) match across agents. This is not cosmetic for
 // gemini: projectRegistry.ts lowercases the whole path on win32 before
 // writing the .project_root marker, so the marker says `d:\friday` where
-// oh-my-pi's header says `D:\friday`. EvalSymlinks is what fixes it —
-// on Windows it rewrites every component to its real on-disk casing.
+// oh-my-pi's header says `D:\friday`.
 func normalizeProjectPath(p string) string {
-	if real, err := filepath.EvalSymlinks(p); err == nil {
-		return real
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return filepath.Clean(p)
 	}
-	return filepath.Clean(p)
+	return onDiskCasing(real)
+}
+
+// onDiskCasing rewrites each component of an existing path to the casing the
+// filesystem itself stores.
+//
+// EvalSymlinks alone is not enough. It recovers casing on Windows, but not on
+// macOS, whose default APFS volume is case-insensitive and case-preserving:
+// gemini-cli's lowercased marker resolves there and comes back still
+// lowercased, leaving one directory wearing two spellings in the Project
+// column - exactly the defect normalizeProjectPath exists to prevent, on the
+// one platform where it survived. On a case-sensitive filesystem every
+// component matches byte-for-byte and this walk changes nothing, so there is
+// no per-OS branch to drift.
+//
+// An exact match always beats a case-insensitive one, so a case-sensitive
+// filesystem holding both `Team.md` and `team.md` keeps the one it was asked
+// for. A component whose parent cannot be listed leaves the remainder as
+// given: a best-effort spelling beats discarding a path that is otherwise
+// correct.
+func onDiskCasing(p string) string {
+	vol := filepath.VolumeName(p)
+	rest := p[len(vol):]
+	sep := string(filepath.Separator)
+	cur := vol
+	if strings.HasPrefix(rest, sep) {
+		cur += sep
+	}
+	for _, part := range strings.Split(strings.Trim(rest, sep), sep) {
+		if part == "" {
+			continue
+		}
+		cur = filepath.Join(cur, onDiskName(cur, part))
+	}
+	if cur == "" {
+		return filepath.Clean(p)
+	}
+	return cur
+}
+
+// onDiskName returns dir's own spelling of name, or name unchanged when dir
+// is unreadable or holds nothing matching it.
+func onDiskName(dir, name string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return name
+	}
+	match := name
+	for _, e := range entries {
+		if e.Name() == name {
+			return name
+		}
+		if strings.EqualFold(e.Name(), name) {
+			match = e.Name()
+		}
+	}
+	return match
 }
 
 // geminiProjectHashes maps sha256(project root) to the project root, for

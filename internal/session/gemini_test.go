@@ -395,3 +395,49 @@ func equalStrSlices(a, b []string) bool {
 	}
 	return true
 }
+
+// TestOnDiskCasingRecoversLowercasedPath pins onDiskCasing directly rather
+// than through normalizeProjectPath, because EvalSymlinks already recovers
+// casing on Windows and would mask a regression there. Going straight at the
+// walk makes the macOS-only defect - a case-insensitive volume where
+// EvalSymlinks returns the spelling it was handed - reproducible on any
+// case-insensitive filesystem, Windows included.
+func TestOnDiskCasingRecoversLowercasedPath(t *testing.T) {
+	parent := t.TempDir()
+	proper := filepath.Join(parent, "MixedCase", "InnerDir")
+	if err := os.MkdirAll(proper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lowered := filepath.Join(parent, "mixedcase", "innerdir")
+	if _, err := os.Stat(lowered); err != nil {
+		t.Skip("case-sensitive filesystem: a lowercased path names nothing here")
+	}
+	if got := onDiskCasing(lowered); got != proper {
+		t.Errorf("onDiskCasing(%q) = %q, want the on-disk casing %q", lowered, got, proper)
+	}
+}
+
+// An exact match must win over a case-insensitive one, or a case-sensitive
+// filesystem holding two spellings of one name would get the wrong file.
+func TestOnDiskCasingPrefersExactMatch(t *testing.T) {
+	parent := t.TempDir()
+	lower := filepath.Join(parent, "team.md")
+	if err := os.WriteFile(lower, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "Team.md"), []byte("y"), 0o644); err != nil {
+		t.Skip("case-insensitive filesystem: two spellings cannot coexist here")
+	}
+	if got := onDiskCasing(lower); got != lower {
+		t.Errorf("onDiskCasing(%q) = %q, want the exact spelling kept", lower, got)
+	}
+}
+
+// A path whose parent cannot be listed keeps the spelling it was given: a
+// best-effort answer beats discarding a path that is otherwise correct.
+func TestOnDiskCasingKeepsUnlistablePath(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "no-such-dir", "child")
+	if got := onDiskCasing(missing); got != filepath.Clean(missing) {
+		t.Errorf("onDiskCasing(%q) = %q, want it unchanged", missing, got)
+	}
+}

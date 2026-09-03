@@ -2,6 +2,19 @@
 
 All notable changes to friday are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`friday sessions --project` matched nothing off Windows.** `normalizeProject` folded separators with `filepath.ToSlash`, which is a no-op on Linux and macOS, so a session whose project path was recorded on Windows (`D:\repo\MyProject`) could not be reached by any filter spelling from another machine. The store is a dotfile meant to sync across machines, so this is the ordinary cross-machine case rather than an edge one. The backslash rewrite is now unconditional.
+- **The gemini reader reported a lowercased project path on macOS.** `normalizeProjectPath` leaned on `filepath.EvalSymlinks` to recover on-disk casing, which it does on Windows but not on Darwin: gemini-cli lowercases the whole path before writing its `.project_root` marker, and on a case-insensitive APFS volume that lowercased path resolves and comes back exactly as handed in. One directory then wore two spellings in the `Project` column, and `--project` (a case-sensitive `Contains`) silently omitted the gemini rows. Casing is now recovered by walking the path against the filesystem's own directory entries, with no per-OS branch to drift, and an exact match always beating a case-insensitive one.
+- **`InstallMethod` did not recognise a scoop path evaluated off Windows** — the same `filepath.ToSlash` no-op. Latent rather than user-facing: the only path it is asked about in production is the running binary's own, so a Windows-shaped path never reaches it on another OS. Corrected for the same reason as the other two.
+
+### Changed
+
+- `actions/setup-go` v6 → v7 in both workflows.
+- `github.com/mattn/go-isatty` 0.0.20 → 0.0.24 and `github.com/charmbracelet/x/ansi` 0.11.6 → 0.11.8, pulling `go-runewidth` 0.0.19 → 0.0.24, `displaywidth` 0.9.0 → 0.11.0, `uax29/v2` 2.5.0 → 2.7.0 and `go-colorful` 1.3.0 → 1.4.0.
+
 ## [1.0.0] — 2026-09-03
 
 **friday renders an agent's whole configuration, not just its Markdown knowledge.** Three canonical, adapter-agnostic YAML schemas — `mcp.yaml`, `permissions.yaml`, `defaults.yaml` — project onto each agent's own native JSON or TOML shape through a new `render` strategy, and two passthrough directories cover whatever a schema doesn't model. The interactive control room v0.5.0 introduced is deleted: friday is a one-shot CLI again, rebuilt on `urfave/cli/v3`.
@@ -304,6 +317,7 @@ First open-source-ready cut. Bug fixes, new commands, and a full set of communit
 - Interactive conflict resolver with line-LCS diff.
 - Cross-platform: Linux, macOS, Windows.
 
+[Unreleased]: https://github.com/zhivko-kocev/friday/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/zhivko-kocev/friday/compare/v0.5.0...v1.0.0
 [0.5.0]: https://github.com/zhivko-kocev/friday/compare/v0.3.2...v0.5.0
 [0.3.2]: https://github.com/zhivko-kocev/friday/compare/v0.3.1...v0.3.2

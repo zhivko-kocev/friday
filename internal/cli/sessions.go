@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -177,8 +176,14 @@ func filterByProject(entries []indexEntry, project string) []indexEntry {
 // looking path while copilot and opencode surface the workspace path as the
 // agent recorded it, so the same directory shows up as both `D:\repo\friday`
 // and `/d/repo/friday` — and Windows paths are case-insensitive anyway.
+//
+// The backslash rewrite is unconditional rather than filepath.ToSlash,
+// which is a no-op off Windows: the store is a dotfile meant to sync
+// across machines, so a session captured on Windows is routinely filtered
+// from Linux or macOS, where ToSlash would leave every separator as it
+// found it and the filter would silently match nothing.
 func normalizeProject(p string) string {
-	return strings.ToLower(filepath.ToSlash(p))
+	return strings.ToLower(strings.ReplaceAll(p, `\`, "/"))
 }
 
 func filterBySince(entries []indexEntry, cutoff time.Time) []indexEntry {

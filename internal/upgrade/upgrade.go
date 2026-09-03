@@ -403,7 +403,10 @@ func extractFromZip(data []byte, binaryName string) ([]byte, error) {
 // pass would silently revert it. An empty manager means no known manager
 // owns exePath, so the download path applies.
 func InstallMethod(exePath string) (manager, upgradeCommand string) {
-	p := strings.ToLower(filepath.ToSlash(exePath))
+	// ReplaceAll, not filepath.ToSlash, which is a no-op off Windows: this
+	// is pure string analysis of a path that may have been recorded on
+	// another OS, so the separator rewrite has to happen everywhere.
+	p := strings.ToLower(strings.ReplaceAll(exePath, `\`, "/"))
 	switch {
 	case strings.Contains(p, "/homebrew/"), strings.Contains(p, "/cellar/"), strings.Contains(p, "/.linuxbrew/"):
 		return "brew", "brew upgrade friday"
