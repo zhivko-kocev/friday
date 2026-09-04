@@ -204,7 +204,7 @@ Paths verified against each agent's current documentation (Claude Code, [Codex C
 
 **Cursor** does not currently expose user-level rules through the filesystem; its global rules live inside Cursor's settings UI. The cursor preset was removed in v0.0.4. If Cursor adds filesystem-backed global rules (open feature request in their forum), the preset will return.
 
-**Windsurf** was removed in v0.6.0. Cognition is folding Windsurf/Cascade into Devin Desktop (`docs.windsurf.com` now 307-redirects to `docs.devin.ai`) and the legacy Cascade line reached end-of-life on 2026-07-01, so its config paths are a moving target. It can return as a `devin` preset once Devin Desktop's config surface settles under its new name.
+**Windsurf** was removed in v1.0.0. Cognition is folding Windsurf/Cascade into Devin Desktop (`docs.windsurf.com` now 307-redirects to `docs.devin.ai`) and the legacy Cascade line reached end-of-life on 2026-07-01, so its config paths are a moving target. It can return as a `devin` preset once Devin Desktop's config surface settles under its new name.
 
 To disable an adapter, delete its entry from `friday.yaml`. To customize a target dir or rule, edit it. The presets only seed the manifest at init time; they don't run again.
 

@@ -13,7 +13,7 @@ the [README](../README.md); this document is the deep end.
 - [The everyday seven](#the-everyday-seven)
   - [`init`](#init--create-or-clone-your-store) · [`claim`](#claim--adopt-an-agents-existing-config) · [`sync`](#sync--the-daily-driver) · [`status`](#status--what-would-change-the-two-axis-grid) · [`setup`](#setup--put-knowledge-into-a-project) · [`sessions`](#sessions--the-cross-agent-session-index) · [`share`](#share--propose-changes-to-your-team)
 - [Advanced commands](#advanced-commands)
-  - [`push`](#push--one-way-store--agents) · [`pull`](#pull--one-way-agents--store) · [`promote`](#promote--project-config-back-into-the-store) · [`transfer`](#transfer--move-one-agents-config-to-another) · [`source`](#source--additional-content-sources) · [`session`](#session--inspect-or-export-one-session) · [`rollback`](#rollback--undo-a-write) · [`remote`](#remote--the-git-bridge) · [`doctor`](#doctor--health-check--best-practice-advisor) · [`upgrade`](#upgrade--update-friday-itself) · [`migrate`](#migrate--modernize-a-manifest-from-an-older-release) · [`eject`](#eject--stop-managing-an-agent) · [`completion`](#completion--shell-tab-completion) · [`version`](#version) · [`help`](#help)
+  - [`push`](#push--one-way-store--agents) · [`pull`](#pull--one-way-agents--store) · [`promote`](#promote--project-config-back-into-the-store) · [`transfer`](#transfer--move-one-agents-config-to-another) · [`source`](#source--additional-content-sources) · [`session`](#session--inspect-or-export-one-session) · [`rollback`](#rollback--undo-a-write) · [`remote`](#remote--the-git-bridge) · [`doctor`](#doctor--health-check--best-practice-advisor) · [`upgrade`](#upgrade--update-friday-itself) · [`migrate`](#migrate--modernize-a-manifest-from-an-older-release) · [`eject`](#eject--stop-managing-agents-entirely) · [`completion`](#completion--shell-tab-completion) · [`version`](#version) · [`help`](#help)
 - [End-to-end workflows](#end-to-end-workflows)
 - [The best-practice advisor](#the-best-practice-advisor-in-depth)
 - [Safety model](#safety-model)
@@ -695,7 +695,13 @@ friday performs **no redaction**: read a brief before committing or sharing it.
 **When:** a push/pull/sync/setup/promote overwrote something you want back.
 
 **Flow:** every write-capable command records a content-addressed snapshot first.
-`rollback` restores the most recent one.
+`rollback` restores the most recent one, or the snapshot named by an optional
+`<id>` argument — which is what `--list`'s ids are for.
+
+**Arguments:**
+| Argument | Meaning |
+|------|---------|
+| `[id]` | Snapshot to restore (from `--list`). Omitted, the latest is used. |
 
 **Flags:**
 | Flag | Meaning |
@@ -707,6 +713,7 @@ friday performs **no redaction**: read a brief before committing or sharing it.
 ```bash
 friday rollback --list
 friday rollback            # restore the latest snapshot
+friday rollback 3f9c1a2b   # restore a specific snapshot (id from --list)
 friday undo                # alias
 ```
 
@@ -1027,7 +1034,7 @@ friday doctor --json
   "summary": { "error": 0, "warn": 1 },
   "adapters": [],
   "drift": [],
-  "agnix": {},
+  "agnix": { "status": "not-found" },
   "warnings": []
 }
 ```

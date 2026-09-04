@@ -153,9 +153,10 @@ not just Markdown knowledge.
   verification against each running agent is still pending.
 - [x] **DX baseline.** `FRIDAY_HOME` overrides the store root (following
   `RUSTUP_HOME`/`CARGO_HOME`); `--quiet` suppresses every non-error line
-  without changing exit codes — including the bare-invocation usage banner and
-  the deprecated-spelling nudge, both of which print outside the usual output
-  helpers; `--verbose` names the resolved source behind each rendered file,
+  without changing exit codes — including the bare-invocation usage banner,
+  which prints outside the usual output helpers, and the deprecated-spelling
+  nudge, routed through `output.Warn` once urfave has parsed the flag;
+  `--verbose` names the resolved source behind each rendered file,
   tagging it `<source>@<root>` once more than one root is configured;
   `FORCE_COLOR` forces color even off a terminal, alongside the existing
   `NO_COLOR`/`FRIDAY_NO_COLOR`; and `status`/`sessions`/`doctor`'s tables are
@@ -183,7 +184,7 @@ item landed in (v0.1.0–v0.2.1).
 - [x] `friday doctor <target-file>` — which adapter + rule produced a file, from which sources (was `friday explain`).
 - [x] `friday pull --discover` — bootstrap/enrich `~/.friday` from an existing installation (reverse expansion; sees files a normal pull can't). Was `friday import`.
 - [x] `friday status --json` (exit 2 on conflicts, for CI).
-- [x] `friday completion bash|zsh|fish` — generated from the command registry so it can't drift from the binary. Since v1.0 the generator is `urfave/cli/v3`'s own: the script calls the binary back with `--generate-shell-completion`, and dynamic values (adapter names) come from per-command `ShellComplete` funcs. A script installed before v1.0 delegates to a `__complete` command that no longer exists — regenerate it.
+- [x] `friday completion bash|zsh|fish` — generated from the command registry so it can't drift from the binary. Since v1.0 the generator is `urfave/cli/v3`'s own: the script calls the binary back with `--generate-shell-completion`, and dynamic values (adapter names) come from per-command `ShellComplete` funcs. A script installed before v1.0 calls a hidden `__complete` callback instead; friday still implements that callback (`internal/cli/shellcomplete.go`), so an old script keeps working — regenerate only to pick up the richer flag and adapter introspection.
 - [x] `friday remote init <url>`.
 - [x] `friday remote propose -m "..."` — review-first publishing for team stores: ephemeral commit → new remote branch → MR (GitLab push options; other forges print their PR link). Local store untouched until the MR merges.
 - [x] `friday promote` — setup's inverse: project agent config → `~/.friday`, optionally chained into `remote propose`. Closes the loop: knowledge born in a project flows up to the user store and out to the team.

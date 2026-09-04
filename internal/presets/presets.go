@@ -287,7 +287,7 @@ var registry = map[string]Preset{
 	//     a conventional instructions dir.
 	//   - Zed keeps global rules in its internal Rules Library, not files.
 	//   - Codeium has no filesystem instruction path.
-	//   - Windsurf / Cascade: dropped in v0.6.0. Cognition is folding it into
+	//   - Windsurf / Cascade: dropped in v1.0.0. Cognition is folding it into
 	//     Devin Desktop (docs.windsurf.com 307-redirects to docs.devin.ai) and
 	//     the legacy Cascade line reached EOL 2026-07-01, so its paths are a
 	//     moving target. It can return as a `devin` preset once Devin Desktop's

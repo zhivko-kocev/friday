@@ -75,7 +75,7 @@ cmd/friday/           entry point — wires os.Args into cli.Run, sets version v
 internal/cli/         command dispatcher (urfave/cli/v3) — one newXCommand func per subcommand
 internal/config/      parses friday.yaml; LoadUser / NewDefault; FRIDAY_HOME store-root override; degrades a stale manifest into Config.Warnings; edit.go rewrites the manifest through a yaml.Node editor so comments and key order survive
 internal/rules/       Rule type, FromSpec (string|[]string), glob expansion, token engine
-internal/source/      composes the primary store + configured `sources:` into one ordered Set of rules.Root
+internal/source/      composes the primary store + configured `sources:` into one ordered Set of Source; Set.Roots() projects it to []rules.Root for glob expansion
 internal/spec/        canonical schemas: MCP (mcp.yaml), Permissions (permissions.yaml), Defaults (defaults.yaml)
 internal/render/      projects a parsed spec (or an agents/commands/*.md record) onto one adapter's native shape
 internal/engine/      plans + applies push/pull over every rule strategy (copy/concatenate/merge-json/merge-toml/render); resolves drift via the conflict UI; atomic writes
